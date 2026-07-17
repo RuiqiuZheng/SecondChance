@@ -4,9 +4,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Tone = "温和真诚" | "直接坦率" | "坚定有边界" | "平静克制";
 type ReplyLength = "简短" | "适中" | "详细";
-type ConversationStatus = "continue" | "paused" | "ended";
-type EndReason = "none" | "resolved" | "needs_space" | "counterpart_ended" | "stalled" | "safety";
-type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "pause" | "end";
+type ConversationStatus = "continue" | "ended";
+type EndReason = "none" | "resolved" | "breakdown" | "max_turns" | "safety";
+type GoalState = "progressing" | "achieved" | "blocked";
+type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "end";
 type CounterpartEmotion = "不确定" | "平静" | "生气" | "难过" | "防备" | "冷淡" | "犹豫";
 type CounterpartOpenness = "不确定" | "想说清楚" | "愿意听但会反驳" | "犹豫观望" | "倾向回避" | "不想继续";
 type CounterpartReaction = "不确定" | "追问细节" | "马上反驳" | "沉默很久" | "转移话题" | "很快结束";
@@ -50,6 +51,8 @@ type ConversationResponse = {
   reply: string;
   status: ConversationStatus;
   endReason: EndReason;
+  goalState: GoalState;
+  goalEvidence: string;
   turnAction: TurnAction;
   mode: "ai" | "demo";
   notice?: string;
@@ -306,20 +309,14 @@ export function SecondReplyApp() {
     ];
     const isDemo = starter.mode === "demo" || chatMode === "demo";
     const modeNotice = chatNotice || starter.notice || (isDemo ? "当前包含本地模拟内容；配置有效的 AI Key 后会优先使用 AI 回复。" : "");
-    const statusLabel = conversationStatus === "continue"
-      ? "对话练习中"
-      : conversationStatus === "paused"
-        ? "这次对话已暂停"
-        : "这次对话已结束";
+    const statusLabel = conversationStatus === "continue" ? "对话练习中" : "这次对话已结束";
     const terminalCopy = endReason === "resolved"
-      ? { eyebrow: "A POSSIBLE ARRIVAL · 一种抵达", title: "这次对话走到了一个结果。", body: "核心意思已经得到回应。你可以停在这里，也可以换一种说法重新练习。" }
-      : endReason === "needs_space"
-        ? { eyebrow: "A PAUSE · 一次暂停", title: "她现在需要一点空间。", body: "尊重暂停也是对话的一部分。这个结果只是模拟的一种可能。" }
-        : endReason === "counterpart_ended"
-          ? { eyebrow: "THE END · 到这里", title: "她结束了这次对话。", body: "结束不等于你的表达没有意义。你仍然可以换一种开场，看看另一条可能的路径。" }
-          : endReason === "safety"
-            ? { eyebrow: "SAFETY FIRST · 先保护自己", title: "这次模拟已停止。", body: "如果现实中存在迫近的危险，请离开现场并联系可信任的人或当地紧急服务。" }
-            : { eyebrow: "A PAUSE · 先停一下", title: "继续说下去可能只是在重复。", body: "停在这里比换一种说法继续循环更接近真实对话。你可以重新练习另一种表达。" };
+      ? { kind: "success", eyebrow: "SUCCESS ENDING · 成功结局", title: "你期待的结果已经达成。", body: "对方的回应已经满足这次对话目的中的关键条件。这只是模拟的一种可能，但这条练习路径已经完整结束。" }
+      : endReason === "breakdown"
+        ? { kind: "breakdown", eyebrow: "BAD ENDING · 中途坏结局", title: "这次对话在中途破裂了。", body: "对方结束、拒绝或失去了继续推进的空间，期待结果还没有达成。你可以换一种开场再试一次。" }
+        : endReason === "max_turns"
+          ? { kind: "max-turns", eyebrow: "BAD ENDING · 轮数耗尽", title: "12 轮结束，目的仍未达成。", body: "这条路径没有在练习上限内走到期待结果。可以重新练习，或修改期待结果和人物状态后再试。" }
+          : { kind: "safety", eyebrow: "SAFETY FIRST · 先保护自己", title: "这次模拟已停止。", body: "如果现实中存在迫近的危险，请离开现场并联系可信任的人或当地紧急服务。" };
 
     return (
       <main className="app-shell chat-page">
@@ -386,7 +383,7 @@ export function SecondReplyApp() {
                     </article>
                   )}
                   {conversationStatus !== "continue" && (
-                    <section className="conversation-end-card" role="status">
+                    <section className={`conversation-end-card ${terminalCopy.kind}`} role="status">
                       <p className="eyebrow">{terminalCopy.eyebrow}</p>
                       <h2>{terminalCopy.title}</h2>
                       <p>{terminalCopy.body}</p>
@@ -450,7 +447,7 @@ export function SecondReplyApp() {
             {starter.assumptions.length > 0 && (
               <p className="sidebar-note">对方当时说的话按“记忆中的大意”处理，不会当成逐字原话。</p>
             )}
-            <p className="turn-count">已经练习 {messages.filter((message) => message.role === "user").length} 轮</p>
+            <p className="turn-count">已经练习 {messages.filter((message) => message.role === "user").length} / 12 轮</p>
           </aside>
         </section>
       </main>

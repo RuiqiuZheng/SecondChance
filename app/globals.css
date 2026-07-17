@@ -827,6 +827,33 @@ a:focus-visible {
   text-align: center;
 }
 
+.conversation-end-card.success {
+  border-color: rgba(75, 132, 101, 0.34);
+  background: linear-gradient(145deg, rgba(157, 181, 168, 0.24), rgba(255, 253, 248, 0.84));
+}
+
+.conversation-end-card.success .eyebrow {
+  color: #4b8465;
+}
+
+.conversation-end-card.breakdown {
+  border-color: rgba(183, 77, 38, 0.32);
+  background: linear-gradient(145deg, rgba(213, 101, 55, 0.12), rgba(255, 253, 248, 0.82));
+}
+
+.conversation-end-card.breakdown .eyebrow {
+  color: var(--orange-dark);
+}
+
+.conversation-end-card.max-turns {
+  border-color: rgba(150, 116, 48, 0.3);
+  background: linear-gradient(145deg, rgba(205, 174, 103, 0.16), rgba(255, 253, 248, 0.84));
+}
+
+.conversation-end-card.max-turns .eyebrow {
+  color: #8a682b;
+}
+
 .conversation-end-card .eyebrow {
   margin-bottom: 0.65rem;
 }

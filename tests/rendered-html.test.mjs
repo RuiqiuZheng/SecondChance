@@ -27,12 +27,12 @@ async function loadWorker(suffix) {
   return worker;
 }
 
-async function requestConversation(worker, messages) {
+async function requestConversation(worker, messages, conversationMemory = memory) {
   return worker.fetch(
     new Request("http://localhost/api/conversation", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ memory, messages }),
+      body: JSON.stringify({ memory: conversationMemory, messages }),
     }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
@@ -76,33 +76,61 @@ test("conversation fallback uses the remembered personality instead of one gener
   assert.equal(payload.mode, "demo");
   assert.equal(payload.status, "continue");
   assert.equal(payload.endReason, "none");
+  assert.equal(payload.goalState, "progressing");
   assert.ok(payload.turnAction);
   assert.match(payload.reply, /根本不是这么说的|哪句才是真的/);
 });
 
-test("conversation fallback ends instead of repeating forever", async () => {
-  const worker = await loadWorker("conversation-ending");
+test("conversation fallback can reach the desired outcome", async () => {
+  const worker = await loadWorker("conversation-success");
   const messages = [
     { role: "user", text: "我想解释那天的事。" },
     { role: "counterpart", text: "你先说。" },
     { role: "user", text: "我当时很害怕。" },
     { role: "counterpart", text: "我知道了。" },
-    { role: "user", text: "我不是故意离开的。" },
-    { role: "counterpart", text: "可你还是走了。" },
-    { role: "user", text: "我后来一直后悔。" },
-    { role: "counterpart", text: "后悔不能改变当时。" },
-    { role: "user", text: "我希望你能明白。" },
-    { role: "counterpart", text: "我已经听见了。" },
-    { role: "user", text: "我还能再说一点吗？" },
+    { role: "user", text: "那我们明天把这次误会具体说开，可以吗？" },
   ];
   const response = await requestConversation(worker, messages);
 
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.mode, "demo");
-  assert.notEqual(payload.status, "continue");
-  assert.notEqual(payload.endReason, "none");
-  assert.match(payload.reply, /到这里|停一下|不想再继续/);
+  assert.equal(payload.status, "ended");
+  assert.equal(payload.endReason, "resolved");
+  assert.equal(payload.goalState, "achieved");
+});
+
+test("conversation fallback records an early breakdown as a bad ending", async () => {
+  const worker = await loadWorker("conversation-breakdown");
+  const response = await requestConversation(worker, [
+    { role: "user", text: "我想解释那天的事。" },
+    { role: "counterpart", text: "我没什么想说的。" },
+    { role: "user", text: "至少让我把最重要的部分说完。" },
+  ], { ...memory, counterpartOpenness: "不想继续" });
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.mode, "demo");
+  assert.equal(payload.status, "ended");
+  assert.equal(payload.endReason, "breakdown");
+  assert.equal(payload.goalState, "blocked");
+});
+
+test("conversation fallback records the twelfth turn as the limit ending", async () => {
+  const worker = await loadWorker("conversation-max-turns");
+  const messages = [];
+  for (let turn = 1; turn <= 12; turn += 1) {
+    messages.push({ role: "user", text: `这是我的第 ${turn} 次解释，我还在说明当时的想法。` });
+    if (turn < 12) messages.push({ role: "counterpart", text: `我听见了第 ${turn} 次解释，但还没有答应。` });
+  }
+  const response = await requestConversation(worker, messages);
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.mode, "demo");
+  assert.equal(payload.status, "ended");
+  assert.equal(payload.endReason, "max_turns");
+  assert.equal(payload.goalState, "blocked");
 });
 
 test("AI conversation requests preserve alternating user and assistant roles", async () => {
@@ -116,10 +144,12 @@ test("AI conversation requests preserve alternating user and assistant roles", a
       capturedBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
         output_text: JSON.stringify({
-          reply: "我听明白了一部分，但我现在需要先停一下。",
-          status: "paused",
-          endReason: "needs_space",
-          turnAction: "pause",
+          reply: "我听明白了一部分，但我不想再继续这段对话了。",
+          status: "ended",
+          endReason: "breakdown",
+          goalState: "blocked",
+          goalEvidence: "对方明确中止对话，目标尚未达成。",
+          turnAction: "end",
         }),
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -135,9 +165,12 @@ test("AI conversation requests preserve alternating user and assistant roles", a
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.mode, "ai");
-    assert.equal(payload.status, "paused");
+    assert.equal(payload.status, "ended");
+    assert.equal(payload.endReason, "breakdown");
     assert.deepEqual(capturedBody.input.map((item) => item.role), ["user", "assistant", "user"]);
     assert.match(capturedBody.input[0].content, /memory JSON/);
+    assert.match(capturedBody.instructions, /desiredOutcome/);
+    assert.deepEqual(capturedBody.text.format.schema.properties.goalState.enum, ["progressing", "achieved", "blocked"]);
     assert.equal(capturedBody.store, false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -160,13 +193,17 @@ test("repetitive AI replies are regenerated once", async () => {
             reply: "我还是不知道该不该相信你说的这些。",
             status: "continue",
             endReason: "none",
+            goalState: "progressing",
+            goalEvidence: "仍然可以继续澄清具体发生的事情。",
             turnAction: "respond",
           }
         : {
-            reply: "我听见你的解释了，但我现在需要一点时间。我们先停在这里吧。",
-            status: "paused",
-            endReason: "needs_space",
-            turnAction: "pause",
+            reply: "我听见你的解释了，但我不想再继续说了。就到这里吧。",
+            status: "ended",
+            endReason: "breakdown",
+            goalState: "blocked",
+            goalEvidence: "对方结束对话，目标尚未达成。",
+            turnAction: "end",
           };
       return new Response(JSON.stringify({ output_text: JSON.stringify(turn) }), {
         status: 200,
@@ -186,8 +223,9 @@ test("repetitive AI replies are regenerated once", async () => {
     const payload = await response.json();
     assert.equal(requestCount, 2);
     assert.equal(payload.mode, "ai");
-    assert.equal(payload.status, "paused");
-    assert.match(payload.reply, /需要一点时间/);
+    assert.equal(payload.status, "ended");
+    assert.equal(payload.endReason, "breakdown");
+    assert.match(payload.reply, /不想再继续|到这里/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
