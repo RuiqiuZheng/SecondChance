@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Tone = "温和真诚" | "直接坦率" | "坚定有边界" | "平静克制";
 type ReplyLength = "简短" | "适中" | "详细";
@@ -19,7 +19,7 @@ type MemoryForm = {
   length: ReplyLength;
 };
 
-type ReplyResult = {
+type StarterResult = {
   primaryReply: string;
   gentleReply: string;
   firmReply: string;
@@ -27,6 +27,19 @@ type ReplyResult = {
   assumptions: string[];
   mode: "ai" | "demo";
   notice?: string;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "counterpart";
+  text: string;
+};
+
+type ConversationResponse = {
+  reply: string;
+  mode: "ai" | "demo";
+  notice?: string;
+  error?: string;
 };
 
 const initialForm: MemoryForm = {
@@ -45,20 +58,31 @@ const initialForm: MemoryForm = {
 
 const toneOptions: Tone[] = ["温和真诚", "直接坦率", "坚定有边界", "平静克制"];
 const lengthOptions: ReplyLength[] = ["简短", "适中", "详细"];
-const adjustments = ["更像日常说话", "再短一点", "更温和", "更坚定"];
 const totalSteps = 8;
 
+function messageId(role: ChatMessage["role"]) {
+  return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function SecondReplyApp() {
-  const [view, setView] = useState<"intro" | "questions" | "result">("intro");
+  const [view, setView] = useState<"intro" | "questions" | "chat">("intro");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<MemoryForm>(initialForm);
-  const [result, setResult] = useState<ReplyResult | null>(null);
+  const [starter, setStarter] = useState<StarterResult | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [chatMode, setChatMode] = useState<"ai" | "demo" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [customAdjustment, setCustomAdjustment] = useState("");
-  const [copied, setCopied] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const progress = Math.round(((step + 1) / totalSteps) * 100);
+
+  useEffect(() => {
+    if (view === "chat") {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [messages, loading, view]);
 
   const canContinue = useMemo(() => {
     switch (step) {
@@ -104,47 +128,77 @@ export function SecondReplyApp() {
     setStep((current) => current - 1);
   }
 
-  async function generate(adjustment = "") {
+  async function beginConversation() {
     setLoading(true);
     setError("");
-    setCopied("");
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, adjustment }),
+        body: JSON.stringify(form),
       });
-      const payload = (await response.json()) as ReplyResult & { error?: string };
+      const payload = (await response.json()) as StarterResult & { error?: string };
       if (!response.ok) {
-        throw new Error(payload.error || "暂时没能生成回答，请稍后再试。");
+        throw new Error(payload.error || "暂时没能准备这段对话，请稍后再试。");
       }
-      setResult(payload);
-      setView("result");
-      setCustomAdjustment("");
+      setStarter(payload);
+      setMessages([]);
+      setDraft("");
+      setChatMode(null);
+      setView("chat");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "暂时没能生成回答，请稍后再试。");
+      setError(caught instanceof Error ? caught.message : "暂时没能准备这段对话，请稍后再试。");
     } finally {
       setLoading(false);
     }
   }
 
-  async function copyReply(label: string, text: string) {
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || loading) return;
+
+    const userMessage: ChatMessage = { id: messageId("user"), role: "user", text };
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
+    setDraft("");
+    setLoading(true);
+    setError("");
+
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(label);
-      window.setTimeout(() => setCopied(""), 1800);
-    } catch {
-      setCopied("");
+      const response = await fetch("/api/conversation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memory: form,
+          messages: nextMessages.map(({ role, text: messageText }) => ({ role, text: messageText })),
+        }),
+      });
+      const payload = (await response.json()) as ConversationResponse;
+      if (!response.ok) {
+        throw new Error(payload.error || "暂时没能生成她的回复，请稍后再试。");
+      }
+      setMessages((current) => [
+        ...current,
+        { id: messageId("counterpart"), role: "counterpart", text: payload.reply },
+      ]);
+      setChatMode(payload.mode);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "暂时没能生成她的回复，请稍后再试。");
+    } finally {
+      setLoading(false);
     }
   }
 
   function reset() {
     setForm(initialForm);
-    setResult(null);
+    setStarter(null);
+    setMessages([]);
+    setDraft("");
+    setChatMode(null);
     setStep(0);
     setView("intro");
     setError("");
-    setCustomAdjustment("");
   }
 
   if (view === "intro") {
@@ -163,122 +217,158 @@ export function SecondReplyApp() {
             <p className="eyebrow">REPLAY THE MOMENT · 重新选择</p>
             <h1>如果可以回到<br />那段对话里。</h1>
             <p className="intro-lede">
-              不改变已经发生的事。只是重新听见当时的自己，找到这一次真正想说的话。
+              你重新选择要说的话，AI 模拟她的一种可能回应。不是改写过去，而是把这场对话继续下去。
             </p>
             <button className="primary-button intro-button" onClick={() => setView("questions")}>
               回到那一刻 <span aria-hidden="true">→</span>
             </button>
-            <p className="microcopy">大约 5 分钟 · 8 个问题 · 随时可以清空</p>
+            <p className="microcopy">大约 5 分钟 · 8 个问题 · 连续对话练习</p>
           </div>
 
           <div className="moment-card" aria-label="产品流程预览">
             <span className="moment-number">02</span>
             <div className="moment-line" />
-            <p>“当时没说出口的，<br />这次可以慢慢说。”</p>
+            <p>“这次由你先说，<br />然后听见一种可能。”</p>
             <div className="moment-steps" aria-hidden="true">
               <span className="active">记起</span>
               <i />
-              <span>理解</span>
+              <span>你说</span>
               <i />
-              <span>回答</span>
+              <span>她回应</span>
             </div>
           </div>
         </section>
 
         <footer className="intro-footer">
           <span>你的记忆属于你</span>
-          <span>不是心理治疗或专业建议</span>
+          <span>模拟回复不代表她真实的想法</span>
         </footer>
       </main>
     );
   }
 
-  if (view === "result" && result) {
-    const cards = [
-      { key: "最像你", title: "最像你的回答", text: result.primaryReply, featured: true },
-      { key: "更温和", title: "更温和的说法", text: result.gentleReply, featured: false },
-      { key: "更坚定", title: "边界更清楚的说法", text: result.firmReply, featured: false },
+  if (view === "chat" && starter) {
+    const starterChoices = [
+      { label: "从核心意思开始", text: starter.primaryReply },
+      { label: "换一种温和说法", text: starter.gentleReply },
+      { label: "先把边界说清楚", text: starter.firmReply },
     ];
+    const isDemo = starter.mode === "demo" || chatMode === "demo";
 
     return (
-      <main className="app-shell result-shell">
+      <main className="app-shell chat-page">
         <header className="site-header compact-header">
           <button className="brand brand-button" onClick={reset} aria-label="清空并返回首页">
             <span className="brand-mark" aria-hidden="true">Ⅱ</span>
             <span>第二次回答</span>
           </button>
-          <button className="text-button" onClick={() => { setView("questions"); setStep(7); }}>修改记忆</button>
+          <div className="chat-header-actions">
+            <button className="text-button" onClick={() => { setView("questions"); setStep(0); }}>修改记忆</button>
+            <button className="danger-text" onClick={reset}>结束练习</button>
+          </div>
         </header>
 
-        <section className="result-hero">
-          <p className="eyebrow">YOUR SECOND REPLY · 你的第二次回答</p>
-          <h1>这一次，你可以这样说。</h1>
-          <p>{result.reflection}</p>
-          {result.mode === "demo" && (
-            <div className="demo-notice" role="status">
-              当前显示可测试的本地草稿。配置服务端 AI Key 后会自动切换为 AI 生成。
-            </div>
-          )}
-        </section>
-
-        <section className="reply-grid" aria-label="回答候选">
-          {cards.map((card) => (
-            <article className={`reply-card ${card.featured ? "featured" : ""}`} key={card.key}>
-              <div className="reply-card-header">
-                <span>{card.title}</span>
-                {card.featured && <span className="recommended">推荐</span>}
+        <section className="chat-stage">
+          <div className="chat-window">
+            <header className="chat-person-header">
+              <span className="chat-avatar" aria-hidden="true">她</span>
+              <div>
+                <strong>{form.relationship}</strong>
+                <span><i /> 对话练习中</span>
               </div>
-              <p>{card.text}</p>
-              <button className="copy-button" onClick={() => copyReply(card.key, card.text)}>
-                {copied === card.key ? "已复制" : "复制这段话"}
-              </button>
-            </article>
-          ))}
-        </section>
+              <span className="simulation-badge">可能回复</span>
+            </header>
 
-        {result.assumptions.length > 0 && (
-          <section className="assumption-note">
-            <strong>我没有把这些当成事实：</strong>
-            <span>{result.assumptions.join("；")}</span>
-          </section>
-        )}
-
-        <section className="refine-panel">
-          <div>
-            <p className="section-kicker">还不像你？</p>
-            <h2>再调整一点</h2>
-          </div>
-          <div className="adjustment-chips">
-            {adjustments.map((item) => (
-              <button key={item} disabled={loading} onClick={() => generate(item)}>{item}</button>
-            ))}
-          </div>
-          <form
-            className="custom-adjustment"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault();
-              if (customAdjustment.trim()) generate(customAdjustment.trim());
-            }}
-          >
-            <label htmlFor="custom-adjustment">或者告诉我，你想怎么改</label>
-            <div>
-              <input
-                id="custom-adjustment"
-                value={customAdjustment}
-                onChange={(event) => setCustomAdjustment(event.target.value)}
-                placeholder="例如：不要说‘我理解你’，更像我平时的语气"
-                maxLength={240}
-              />
-              <button disabled={loading || !customAdjustment.trim()}>{loading ? "生成中…" : "重新生成"}</button>
+            <div className="chat-disclaimer" role="note">
+              AI 只根据你的回忆模拟一种可能，不代表她真实会这样说。
             </div>
-          </form>
-          {error && <p className="error-message" role="alert">{error}</p>}
-        </section>
 
-        <footer className="result-footer">
-          <button className="danger-text" onClick={reset}>清空这次记忆</button>
-          <p>这些文字只是一个起点。真正的回答，仍然由你决定。</p>
-        </footer>
+            <div className="chat-scroll" aria-live="polite">
+              {messages.length === 0 ? (
+                <section className="conversation-opening">
+                  <p className="eyebrow">YOUR TURN · 轮到你</p>
+                  <h1>这一次，你想先说什么？</h1>
+                  <p>{starter.reflection} 你可以完全自己写，也可以先选择一段草稿再修改。</p>
+                  <div className="starter-choices">
+                    {starterChoices.map((choice) => (
+                      <button key={choice.label} onClick={() => setDraft(choice.text)}>
+                        <span>{choice.label}</span>
+                        <p>{choice.text}</p>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                <div className="message-list">
+                  <div className="scene-marker"><span>重新回到那一刻</span></div>
+                  {messages.map((message) => (
+                    <article className={`message-row ${message.role}`} key={message.id}>
+                      {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">她</span>}
+                      <div>
+                        <span className="message-author">{message.role === "user" ? "你" : form.relationship}</span>
+                        <p>{message.text}</p>
+                      </div>
+                    </article>
+                  ))}
+                  {loading && (
+                    <article className="message-row counterpart" aria-label="她正在回复">
+                      <span className="message-avatar" aria-hidden="true">她</span>
+                      <div>
+                        <span className="message-author">{form.relationship}</span>
+                        <p className="typing-indicator"><i /><i /><i /></p>
+                      </div>
+                    </article>
+                  )}
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <form className="chat-composer" onSubmit={sendMessage}>
+              {isDemo && (
+                <div className="demo-strip">当前是本地草稿模式；配置 AI Key 后，她的回复会由 AI 生成。</div>
+              )}
+              <label htmlFor="chat-draft">你想说的话</label>
+              <div className="composer-box">
+                <textarea
+                  id="chat-draft"
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="写下这一次你真正想说的话……"
+                  maxLength={1200}
+                  rows={3}
+                />
+                <div className="composer-footer">
+                  <span>{draft.length} / 1200 · Shift + Enter 换行</span>
+                  <button disabled={loading || !draft.trim()}>
+                    {loading ? "等待她回复…" : "说给她听"} <span aria-hidden="true">↑</span>
+                  </button>
+                </div>
+              </div>
+              {error && <p className="error-message" role="alert">{error}</p>}
+            </form>
+          </div>
+
+          <aside className="scene-sidebar">
+            <p className="eyebrow">THE MEMORY · 这段记忆</p>
+            <dl>
+              <div><dt>你面对的人</dt><dd>{form.relationship}</dd></div>
+              <div><dt>当时发生的事</dt><dd>{form.context}</dd></div>
+              <div><dt>这次你想做到</dt><dd>{form.desiredOutcome}</dd></div>
+              {form.boundary && <div><dt>你的边界</dt><dd>{form.boundary}</dd></div>}
+            </dl>
+            {starter.assumptions.length > 0 && (
+              <p className="sidebar-note">对方当时说的话按“记忆中的大意”处理，不会当成逐字原话。</p>
+            )}
+            <p className="turn-count">已经练习 {messages.filter((message) => message.role === "user").length} 轮</p>
+          </aside>
+        </section>
       </main>
     );
   }
@@ -317,8 +407,8 @@ export function SecondReplyApp() {
             {step < totalSteps - 1 ? (
               <button className="primary-button" onClick={nextStep} disabled={!canContinue}>继续 <span aria-hidden="true">→</span></button>
             ) : (
-              <button className="primary-button generate-button" onClick={() => generate()} disabled={loading}>
-                {loading ? "正在组织语言…" : "生成我的第二次回答"}
+              <button className="primary-button generate-button" onClick={beginConversation} disabled={loading}>
+                {loading ? "正在准备这段对话…" : "进入这段对话"}
               </button>
             )}
           </div>
@@ -326,7 +416,7 @@ export function SecondReplyApp() {
       </section>
 
       <footer className="question-footer">
-        <span>只在点击生成时发送问卷内容</span>
+        <span>只在进入练习后发送问卷内容</span>
         <button className="danger-text" onClick={reset}>清空</button>
       </footer>
     </main>
@@ -341,9 +431,9 @@ function renderQuestion(
   switch (step) {
     case 0:
       return (
-        <QuestionFrame number="01" title="当时，你在和谁说话？" hint="写关系就可以，不需要真实姓名。">
-          <label className="field-label" htmlFor="relationship">你们的关系</label>
-          <input id="relationship" className="large-input" autoFocus value={form.relationship} onChange={(event) => update("relationship", event.target.value)} placeholder="例如：伴侣、朋友、同事、家人" maxLength={120} />
+        <QuestionFrame number="01" title="她是谁？" hint="写一个称呼和你们的关系，不需要使用真实姓名。">
+          <label className="field-label" htmlFor="relationship">她的称呼或你们的关系</label>
+          <input id="relationship" className="large-input" autoFocus value={form.relationship} onChange={(event) => update("relationship", event.target.value)} placeholder="例如：小林，我的前同事" maxLength={120} />
         </QuestionFrame>
       );
     case 1:
@@ -355,12 +445,12 @@ function renderQuestion(
       );
     case 2:
       return (
-        <QuestionFrame number="03" title="对方说了什么？" hint="不记得原话也没关系，可以只写大意。">
+        <QuestionFrame number="03" title="她当时说了什么？" hint="不记得原话也没关系，可以只写大意。">
           <label className="field-label" htmlFor="counterpartWords">你记得的话</label>
-          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="例如：对方觉得我没有认真对待这件事……" maxLength={1600} />
+          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="例如：她觉得我没有认真对待这件事……" maxLength={1600} />
           <label className="check-row">
             <input type="checkbox" checked={form.isApproximate} onChange={(event) => update("isApproximate", event.target.checked)} />
-            <span>这是大意，不一定是对方的原话</span>
+            <span>这是大意，不一定是她的原话</span>
           </label>
         </QuestionFrame>
       );
@@ -380,14 +470,14 @@ function renderQuestion(
       );
     case 5:
       return (
-        <QuestionFrame number="06" title="如果再来一次，你最想让对方明白什么？" hint="先不用考虑怎么说，只写最核心的意思。">
+        <QuestionFrame number="06" title="如果再来一次，你最想让她明白什么？" hint="先不用考虑怎么说，只写最核心的意思。">
           <label className="field-label" htmlFor="coreIntent">真正想表达的</label>
           <textarea id="coreIntent" className="large-textarea" autoFocus value={form.coreIntent} onChange={(event) => update("coreIntent", event.target.value)} placeholder="例如：我不是不在乎，我愿意继续，但需要重新商量分工。" maxLength={1600} />
         </QuestionFrame>
       );
     case 6:
       return (
-        <QuestionFrame number="07" title="你希望这次回答带来什么？" hint="结果不完全由你控制，但你可以说清自己的愿望和边界。">
+        <QuestionFrame number="07" title="你希望这次对话带来什么？" hint="结果不完全由你控制，但你可以说清自己的愿望和边界。">
           <label className="field-label" htmlFor="desiredOutcome">你希望发生的改变</label>
           <textarea id="desiredOutcome" className="medium-textarea" autoFocus value={form.desiredOutcome} onChange={(event) => update("desiredOutcome", event.target.value)} placeholder="例如：继续合作，但彼此把分工说清楚。" maxLength={1000} />
           <label className="field-label second-label" htmlFor="boundary">不能退让的边界（选填）</label>
@@ -396,9 +486,9 @@ function renderQuestion(
       );
     default:
       return (
-        <QuestionFrame number="08" title="这次，你想用怎样的声音说？" hint="AI 会保留你的意思，只调整表达方式。">
+        <QuestionFrame number="08" title="这次，你想怎样说？" hint="这些选项只用于提供开场草稿；进入对话后，每一句都由你自己决定。">
           <fieldset className="choice-fieldset">
-            <legend>语气</legend>
+            <legend>你的语气</legend>
             <div className="choice-grid tone-grid">
               {toneOptions.map((tone) => (
                 <button type="button" key={tone} className={form.tone === tone ? "selected" : ""} onClick={() => update("tone", tone)} aria-pressed={form.tone === tone}>{tone}</button>
@@ -406,7 +496,7 @@ function renderQuestion(
             </div>
           </fieldset>
           <fieldset className="choice-fieldset length-fieldset">
-            <legend>长度</legend>
+            <legend>开场长度</legend>
             <div className="choice-grid length-grid">
               {lengthOptions.map((length) => (
                 <button type="button" key={length} className={form.length === length ? "selected" : ""} onClick={() => update("length", length)} aria-pressed={form.length === length}>{length}</button>
