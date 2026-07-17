@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Tone = "温和真诚" | "直接坦率" | "坚定有边界" | "平静克制";
 type ReplyLength = "简短" | "适中" | "详细";
@@ -19,6 +19,8 @@ type MemoryForm = {
   isApproximate: boolean;
   counterpartStyle: string;
   counterpartPhrases: string;
+  conversationSamples: string;
+  sampleCounterpartName: string;
   counterpartEmotion: CounterpartEmotion;
   counterpartOpenness: CounterpartOpenness;
   counterpartReaction: CounterpartReaction;
@@ -37,6 +39,7 @@ type StarterResult = {
   firmReply: string;
   reflection: string;
   assumptions: string[];
+  sampleProfile: string;
   mode: "ai" | "demo";
   notice?: string;
 };
@@ -66,6 +69,8 @@ const initialForm: MemoryForm = {
   isApproximate: true,
   counterpartStyle: "",
   counterpartPhrases: "",
+  conversationSamples: "",
+  sampleCounterpartName: "",
   counterpartEmotion: "不确定",
   counterpartOpenness: "不确定",
   counterpartReaction: "不确定",
@@ -83,10 +88,34 @@ const lengthOptions: ReplyLength[] = ["简短", "适中", "详细"];
 const emotionOptions: CounterpartEmotion[] = ["不确定", "平静", "生气", "难过", "防备", "冷淡", "犹豫"];
 const opennessOptions: CounterpartOpenness[] = ["不确定", "想说清楚", "愿意听但会反驳", "犹豫观望", "倾向回避", "不想继续"];
 const reactionOptions: CounterpartReaction[] = ["不确定", "追问细节", "马上反驳", "沉默很久", "转移话题", "很快结束"];
-const totalSteps = 10;
+const totalSteps = 11;
+const maxSampleFileBytes = 200 * 1024;
+const maxSampleCharacters = 16_000;
 
 function messageId(role: ChatMessage["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
+  return {
+    relationship: form.relationship,
+    context: form.context,
+    counterpartWords: form.counterpartWords,
+    isApproximate: form.isApproximate,
+    counterpartStyle: form.counterpartStyle,
+    counterpartPhrases: form.counterpartPhrases,
+    sampleProfile,
+    counterpartEmotion: form.counterpartEmotion,
+    counterpartOpenness: form.counterpartOpenness,
+    counterpartReaction: form.counterpartReaction,
+    originalReply: form.originalReply,
+    feelings: form.feelings,
+    coreIntent: form.coreIntent,
+    desiredOutcome: form.desiredOutcome,
+    boundary: form.boundary,
+    tone: form.tone,
+    length: form.length,
+  };
 }
 
 export function SecondReplyApp() {
@@ -100,6 +129,8 @@ export function SecondReplyApp() {
   const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("continue");
   const [endReason, setEndReason] = useState<EndReason>("none");
   const [chatNotice, setChatNotice] = useState("");
+  const [sampleFileName, setSampleFileName] = useState("");
+  const [sampleImportNotice, setSampleImportNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -127,10 +158,12 @@ export function SecondReplyApp() {
       case 5:
         return true;
       case 6:
-        return form.feelings.trim().length > 0;
+        return true;
       case 7:
-        return form.coreIntent.trim().length > 0;
+        return form.feelings.trim().length > 0;
       case 8:
+        return form.coreIntent.trim().length > 0;
+      case 9:
         return form.desiredOutcome.trim().length > 0;
       default:
         return true;
@@ -158,6 +191,46 @@ export function SecondReplyApp() {
       return;
     }
     setStep((current) => current - 1);
+  }
+
+  async function importConversationSample(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > maxSampleFileBytes) {
+      setSampleImportNotice("文件超过 200 KB，请先删减或只保留有代表性的对话片段。");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const text = (await file.text()).trim();
+      if (!text) {
+        setSampleImportNotice("这个文件没有可读取的文字内容。");
+        event.target.value = "";
+        return;
+      }
+
+      const clipped = text.slice(0, maxSampleCharacters);
+      update("conversationSamples", clipped);
+      setSampleFileName(file.name);
+      setSampleImportNotice(
+        text.length > maxSampleCharacters
+          ? `已导入 ${file.name}，为控制隐私和长度，仅保留前 ${maxSampleCharacters.toLocaleString()} 个字符。`
+          : `已导入 ${file.name}，共 ${clipped.length.toLocaleString()} 个字符。`,
+      );
+    } catch {
+      setSampleImportNotice("没能读取这个文件，请改用 UTF-8 文本文件或直接粘贴聊天记录。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function clearConversationSample() {
+    update("conversationSamples", "");
+    update("sampleCounterpartName", "");
+    setSampleFileName("");
+    setSampleImportNotice("已移除聊天参考样本。");
   }
 
   async function beginConversation() {
@@ -205,13 +278,13 @@ export function SecondReplyApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          memory: form,
+          memory: buildConversationMemory(form, starter.sampleProfile),
           messages: nextMessages.map(({ role, text: messageText }) => ({ role, text: messageText })),
         }),
       });
       const payload = (await response.json()) as ConversationResponse;
       if (!response.ok) {
-        throw new Error(payload.error || "暂时没能生成她的回复，请稍后再试。");
+        throw new Error(payload.error || "暂时没能生成对方的回复，请稍后再试。");
       }
       setMessages((current) => [
         ...current,
@@ -225,7 +298,7 @@ export function SecondReplyApp() {
     } catch (caught) {
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(text);
-      setError(caught instanceof Error ? caught.message : "暂时没能生成她的回复，请稍后再试。");
+      setError(caught instanceof Error ? caught.message : "暂时没能生成对方的回复，请稍后再试。");
     } finally {
       setLoading(false);
     }
@@ -250,6 +323,8 @@ export function SecondReplyApp() {
     setConversationStatus("continue");
     setEndReason("none");
     setChatNotice("");
+    setSampleFileName("");
+    setSampleImportNotice("");
     setStep(0);
     setView("intro");
     setError("");
@@ -271,12 +346,12 @@ export function SecondReplyApp() {
             <p className="eyebrow">REPLAY THE MOMENT · 重新选择</p>
             <h1>如果可以回到<br />那段对话里。</h1>
             <p className="intro-lede">
-              你重新选择要说的话，AI 模拟她的一种可能回应。不是改写过去，而是把这场对话继续下去。
+              你重新选择要说的话，AI 模拟对方的一种可能回应。不是改写过去，而是把这场对话继续下去。
             </p>
             <button className="primary-button intro-button" onClick={() => setView("questions")}>
               回到那一刻 <span aria-hidden="true">→</span>
             </button>
-            <p className="microcopy">大约 6 分钟 · 10 个问题 · 连续对话练习</p>
+            <p className="microcopy">大约 6 分钟 · 11 个问题 · 连续对话练习</p>
           </div>
 
           <div className="moment-card" aria-label="产品流程预览">
@@ -288,14 +363,14 @@ export function SecondReplyApp() {
               <i />
               <span>你说</span>
               <i />
-              <span>她回应</span>
+              <span>对方回应</span>
             </div>
           </div>
         </section>
 
         <footer className="intro-footer">
           <span>你的记忆属于你</span>
-          <span>模拟回复不代表她真实的想法</span>
+          <span>模拟回复不代表对方真实的想法</span>
         </footer>
       </main>
     );
@@ -334,7 +409,7 @@ export function SecondReplyApp() {
         <section className="chat-stage">
           <div className="chat-window">
             <header className="chat-person-header">
-              <span className="chat-avatar" aria-hidden="true">她</span>
+              <span className="chat-avatar" aria-hidden="true">TA</span>
               <div>
                 <strong>{form.relationship}</strong>
                 <span className={conversationStatus === "continue" ? "" : "conversation-stopped"}><i /> {statusLabel}</span>
@@ -343,7 +418,7 @@ export function SecondReplyApp() {
             </header>
 
             <div className="chat-disclaimer" role="note">
-              AI 只根据你的回忆模拟一种可能，不代表她真实会这样说。
+              AI 只根据你的回忆和可选参考样本模拟一种可能，不代表对方真实会这样说。
             </div>
 
             <div className="chat-scroll" aria-live="polite">
@@ -366,7 +441,7 @@ export function SecondReplyApp() {
                   <div className="scene-marker"><span>重新回到那一刻</span></div>
                   {messages.map((message) => (
                     <article className={`message-row ${message.role}`} key={message.id}>
-                      {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">她</span>}
+                      {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">TA</span>}
                       <div>
                         <span className="message-author">{message.role === "user" ? "你" : form.relationship}</span>
                         <p>{message.text}</p>
@@ -374,8 +449,8 @@ export function SecondReplyApp() {
                     </article>
                   ))}
                   {loading && (
-                    <article className="message-row counterpart" aria-label="她正在回复">
-                      <span className="message-avatar" aria-hidden="true">她</span>
+                    <article className="message-row counterpart" aria-label="对方正在回复">
+                      <span className="message-avatar" aria-hidden="true">TA</span>
                       <div>
                         <span className="message-author">{form.relationship}</span>
                         <p className="typing-indicator"><i /><i /><i /></p>
@@ -417,7 +492,7 @@ export function SecondReplyApp() {
                   <div className="composer-footer">
                     <span>{draft.length} / 1200 · Shift + Enter 换行</span>
                     <button disabled={loading || !draft.trim()}>
-                      {loading ? "等待她回复…" : "说给她听"} <span aria-hidden="true">↑</span>
+                      {loading ? "等待对方回复…" : "说给对方听"} <span aria-hidden="true">↑</span>
                     </button>
                   </div>
                 </div>
@@ -439,8 +514,9 @@ export function SecondReplyApp() {
             <dl>
               <div><dt>你面对的人</dt><dd>{form.relationship}</dd></div>
               <div><dt>当时发生的事</dt><dd>{form.context}</dd></div>
-              <div><dt>她的说话方式</dt><dd>{form.counterpartStyle}</dd></div>
-              <div><dt>她当时的状态</dt><dd>{form.counterpartEmotion} · {form.counterpartOpenness}</dd></div>
+              <div><dt>对方的说话方式</dt><dd>{form.counterpartStyle}</dd></div>
+              <div><dt>对方当时的状态</dt><dd>{form.counterpartEmotion} · {form.counterpartOpenness}</dd></div>
+              {form.conversationSamples && <div><dt>聊天参考样本</dt><dd>已导入 {form.conversationSamples.length.toLocaleString()} 个字符</dd></div>}
               <div><dt>这次你想做到</dt><dd>{form.desiredOutcome}</dd></div>
               {form.boundary && <div><dt>你的边界</dt><dd>{form.boundary}</dd></div>}
             </dl>
@@ -480,7 +556,12 @@ export function SecondReplyApp() {
         </aside>
 
         <div className="question-card">
-          {renderQuestion(step, form, update)}
+          {renderQuestion(step, form, update, {
+            importConversationSample,
+            clearConversationSample,
+            sampleFileName,
+            sampleImportNotice,
+          })}
           {error && <p className="error-message" role="alert">{error}</p>}
 
           <div className="question-actions">
@@ -508,12 +589,18 @@ function renderQuestion(
   step: number,
   form: MemoryForm,
   update: <K extends keyof MemoryForm>(key: K, value: MemoryForm[K]) => void,
+  sampleControls: {
+    importConversationSample: (event: ChangeEvent<HTMLInputElement>) => void;
+    clearConversationSample: () => void;
+    sampleFileName: string;
+    sampleImportNotice: string;
+  },
 ) {
   switch (step) {
     case 0:
       return (
-        <QuestionFrame number="01" title="她是谁？" hint="写一个称呼和你们的关系，不需要使用真实姓名。">
-          <label className="field-label" htmlFor="relationship">她的称呼或你们的关系</label>
+        <QuestionFrame number="01" title="对方是谁？" hint="写一个称呼和你们的关系，不需要使用真实姓名。">
+          <label className="field-label" htmlFor="relationship">对方的称呼或你们的关系</label>
           <input id="relationship" className="large-input" autoFocus value={form.relationship} onChange={(event) => update("relationship", event.target.value)} placeholder="例如：小林，我的前同事" maxLength={120} />
         </QuestionFrame>
       );
@@ -526,29 +613,48 @@ function renderQuestion(
       );
     case 2:
       return (
-        <QuestionFrame number="03" title="她当时说了什么？" hint="不记得原话也没关系，可以只写大意。">
+        <QuestionFrame number="03" title="对方当时说了什么？" hint="不记得原话也没关系，可以只写大意。">
           <label className="field-label" htmlFor="counterpartWords">你记得的话</label>
-          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="例如：她觉得我没有认真对待这件事……" maxLength={1600} />
+          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="例如：对方觉得我没有认真对待这件事……" maxLength={1600} />
           <label className="check-row">
             <input type="checkbox" checked={form.isApproximate} onChange={(event) => update("isApproximate", event.target.checked)} />
-            <span>这是大意，不一定是她的原话</span>
+            <span>这是大意，不一定是对方的原话</span>
           </label>
         </QuestionFrame>
       );
     case 3:
       return (
-        <QuestionFrame number="04" title="她平时怎样说话？" hint="写她真实的表达习惯，而不是你希望她怎样回答。想不起来可以写“不确定”。">
-          <label className="field-label" htmlFor="counterpartStyle">她的说话方式</label>
+        <QuestionFrame number="04" title="对方平时怎样说话？" hint="写对方真实的表达习惯，而不是你希望对方怎样回答。想不起来可以写“不确定”。">
+          <label className="field-label" htmlFor="counterpartStyle">对方的说话方式</label>
           <textarea id="counterpartStyle" className="large-textarea" autoFocus value={form.counterpartStyle} onChange={(event) => update("counterpartStyle", event.target.value)} placeholder="例如：话很少，句子短；不喜欢直接说情绪；生气时会反问，有时只回“行”。" maxLength={1400} />
-          <label className="field-label second-label" htmlFor="counterpartPhrases">她常用的词或口头禅（选填）</label>
-          <textarea id="counterpartPhrases" className="medium-textarea" value={form.counterpartPhrases} onChange={(event) => update("counterpartPhrases", event.target.value)} placeholder="例如：她常说“算了”“你先说”“我不知道”……" maxLength={800} />
+          <label className="field-label second-label" htmlFor="counterpartPhrases">对方常用的词或口头禅（选填）</label>
+          <textarea id="counterpartPhrases" className="medium-textarea" value={form.counterpartPhrases} onChange={(event) => update("counterpartPhrases", event.target.value)} placeholder="例如：对方常说“算了”“你先说”“我不知道”……" maxLength={800} />
         </QuestionFrame>
       );
     case 4:
       return (
-        <QuestionFrame number="05" title="那一刻，她是什么状态？" hint="这是你记忆中的判断，不会被当成她确定的内心。">
+        <QuestionFrame number="05" title="导入聊天参考样本（选填）" hint="粘贴聊天记录或导入文本文件，AI 会在进入练习时提炼对方的表达与反应规律。没有样本可以直接继续。">
+          <label className="field-label" htmlFor="sampleCounterpartName">聊天记录里对方显示的名字（选填）</label>
+          <input id="sampleCounterpartName" className="large-input compact-input" value={form.sampleCounterpartName} onChange={(event) => update("sampleCounterpartName", event.target.value)} placeholder="例如：小林；用于区分聊天双方" maxLength={120} />
+          <label className="field-label second-label" htmlFor="conversationSamples">聊天记录</label>
+          <textarea id="conversationSamples" className="large-textarea sample-textarea" value={form.conversationSamples} onChange={(event) => update("conversationSamples", event.target.value.slice(0, maxSampleCharacters))} placeholder={'例如：\n我：周六有空吗？\n小林：可能要加班，晚点告诉你。'} maxLength={maxSampleCharacters} />
+          <div className="sample-import-row">
+            <label className="file-picker" htmlFor="conversationSampleFile">导入文本文件</label>
+            <input id="conversationSampleFile" className="visually-hidden" type="file" accept=".txt,.md,.json,.csv,.log,text/plain,text/csv,application/json" onChange={sampleControls.importConversationSample} />
+            <span>支持 TXT、MD、JSON、CSV、LOG，最大 200 KB</span>
+            {form.conversationSamples && <button type="button" className="sample-clear" onClick={sampleControls.clearConversationSample}>移除样本</button>}
+          </div>
+          {(sampleControls.sampleImportNotice || sampleControls.sampleFileName) && (
+            <p className="sample-status" role="status">{sampleControls.sampleImportNotice || `已导入 ${sampleControls.sampleFileName}`}</p>
+          )}
+          <p className="sample-privacy-note">请先删除真实姓名、电话、地址、账号、身份证件和其他不必要的隐私。原始样本不会写入数据库，也不会随每轮对话重复发送。</p>
+        </QuestionFrame>
+      );
+    case 5:
+      return (
+        <QuestionFrame number="06" title="那一刻，对方是什么状态？" hint="这是你记忆中的判断，不会被当成对方确定的内心。">
           <fieldset className="choice-fieldset">
-            <legend>她表现出来的情绪</legend>
+            <legend>对方表现出来的情绪</legend>
             <div className="choice-grid persona-grid">
               {emotionOptions.map((emotion) => (
                 <button type="button" key={emotion} className={form.counterpartEmotion === emotion ? "selected" : ""} onClick={() => update("counterpartEmotion", emotion)} aria-pressed={form.counterpartEmotion === emotion}>{emotion}</button>
@@ -556,7 +662,7 @@ function renderQuestion(
             </div>
           </fieldset>
           <fieldset className="choice-fieldset persona-fieldset">
-            <legend>她愿不愿意继续谈</legend>
+            <legend>对方愿不愿意继续谈</legend>
             <div className="choice-grid persona-grid">
               {opennessOptions.map((openness) => (
                 <button type="button" key={openness} className={form.counterpartOpenness === openness ? "selected" : ""} onClick={() => update("counterpartOpenness", openness)} aria-pressed={form.counterpartOpenness === openness}>{openness}</button>
@@ -564,7 +670,7 @@ function renderQuestion(
             </div>
           </fieldset>
           <fieldset className="choice-fieldset persona-fieldset">
-            <legend>发生冲突时，她通常会</legend>
+            <legend>发生冲突时，对方通常会</legend>
             <div className="choice-grid persona-grid">
               {reactionOptions.map((reaction) => (
                 <button type="button" key={reaction} className={form.counterpartReaction === reaction ? "selected" : ""} onClick={() => update("counterpartReaction", reaction)} aria-pressed={form.counterpartReaction === reaction}>{reaction}</button>
@@ -573,30 +679,30 @@ function renderQuestion(
           </fieldset>
         </QuestionFrame>
       );
-    case 5:
+    case 6:
       return (
-        <QuestionFrame number="06" title="你当时怎么回答的？" hint="如果当时沉默了，可以写“没有回答”。这题也可以跳过。">
+        <QuestionFrame number="07" title="你当时怎么回答的？" hint="如果当时沉默了，可以写“没有回答”。这题也可以跳过。">
           <label className="field-label" htmlFor="originalReply">当时的回答（选填）</label>
           <textarea id="originalReply" className="large-textarea" autoFocus value={form.originalReply} onChange={(event) => update("originalReply", event.target.value)} placeholder="例如：我只说了“随便你”，然后离开了。" maxLength={1200} />
         </QuestionFrame>
       );
-    case 6:
+    case 7:
       return (
-        <QuestionFrame number="07" title="当时，什么让你没能说出口？" hint="可以是感受、担心，也可以是来不及整理好的想法。">
+        <QuestionFrame number="08" title="当时，什么让你没能说出口？" hint="可以是感受、担心，也可以是来不及整理好的想法。">
           <label className="field-label" htmlFor="feelings">当时的你</label>
           <textarea id="feelings" className="large-textarea" autoFocus value={form.feelings} onChange={(event) => update("feelings", event.target.value)} placeholder="例如：我很委屈，也怕一开口就会让关系更糟……" maxLength={1600} />
         </QuestionFrame>
       );
-    case 7:
+    case 8:
       return (
-        <QuestionFrame number="08" title="如果再来一次，你最想让她明白什么？" hint="先不用考虑怎么说，只写最核心的意思。">
+        <QuestionFrame number="09" title="如果再来一次，你最想让对方明白什么？" hint="先不用考虑怎么说，只写最核心的意思。">
           <label className="field-label" htmlFor="coreIntent">真正想表达的</label>
           <textarea id="coreIntent" className="large-textarea" autoFocus value={form.coreIntent} onChange={(event) => update("coreIntent", event.target.value)} placeholder="例如：我不是不在乎，我愿意继续，但需要重新商量分工。" maxLength={1600} />
         </QuestionFrame>
       );
-    case 8:
+    case 9:
       return (
-        <QuestionFrame number="09" title="你希望这次对话带来什么？" hint="结果不完全由你控制，但你可以说清自己的愿望和边界。">
+        <QuestionFrame number="10" title="你希望这次对话带来什么？" hint="结果不完全由你控制，但你可以说清自己的愿望和边界。">
           <label className="field-label" htmlFor="desiredOutcome">你希望发生的改变</label>
           <textarea id="desiredOutcome" className="medium-textarea" autoFocus value={form.desiredOutcome} onChange={(event) => update("desiredOutcome", event.target.value)} placeholder="例如：继续合作，但彼此把分工说清楚。" maxLength={1000} />
           <label className="field-label second-label" htmlFor="boundary">不能退让的边界（选填）</label>
@@ -605,7 +711,7 @@ function renderQuestion(
       );
     default:
       return (
-        <QuestionFrame number="10" title="这次，你想怎样说？" hint="这些选项只用于提供开场草稿；进入对话后，每一句都由你自己决定。">
+        <QuestionFrame number="11" title="这次，你想怎样说？" hint="这些选项只用于提供开场草稿；进入对话后，每一句都由你自己决定。">
           <fieldset className="choice-fieldset">
             <legend>你的语气</legend>
             <div className="choice-grid tone-grid">

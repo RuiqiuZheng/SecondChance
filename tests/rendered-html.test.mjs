@@ -4,10 +4,11 @@ import test from "node:test";
 const memory = {
   relationship: "一位旧朋友",
   context: "我们因为一次失约争吵。",
-  counterpartWords: "她说我根本不在乎。",
+  counterpartWords: "对方说我根本不在乎。",
   isApproximate: true,
   counterpartStyle: "句子很短，生气时会直接反问。",
   counterpartPhrases: "算了",
+  sampleProfile: "偏好短句；冲突时会先直接反问，拒绝时通常很明确。",
   counterpartEmotion: "生气",
   counterpartOpenness: "愿意听但会反驳",
   counterpartReaction: "马上反驳",
@@ -39,6 +40,18 @@ async function requestConversation(worker, messages, conversationMemory = memory
   );
 }
 
+async function requestGenerate(worker, questionnaire) {
+  return worker.fetch(
+    new Request("http://localhost/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(questionnaire),
+    }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+}
+
 async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -60,9 +73,53 @@ test("server-renders the second reply questionnaire", async () => {
   assert.match(html, /<title>第二次回答<\/title>/i);
   assert.match(html, /如果可以回到/);
   assert.match(html, /回到那一刻/);
-  assert.match(html, /10 个问题/);
+  assert.match(html, /11 个问题/);
   assert.match(html, /本次内容不会保存在浏览器/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
+});
+
+test("generate extracts a compact profile from an optional chat sample", async () => {
+  const worker = await loadWorker("generate-sample-profile");
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+  let capturedBody;
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://api.openai.com/v1/responses") {
+      capturedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        output_text: JSON.stringify({
+          primaryReply: "我想把那天的误会说清楚。",
+          gentleReply: "如果你愿意，我想重新说说那天的事。",
+          firmReply: "我愿意解释，但不能接受互相羞辱。",
+          reflection: "你想让表达更接近真实的自己。",
+          assumptions: ["对方的话是记忆中的大意"],
+          sampleProfile: "常用短句，通常先直接回应；不确定时会暂缓决定，拒绝时表达明确。",
+        }),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return originalFetch(input, init);
+  };
+
+  try {
+    const response = await requestGenerate(worker, {
+      ...memory,
+      conversationSamples: "我：周六有空吗？\n小林：还不知道，晚点定。\n我：那下午呢？\n小林：不行，我有安排。",
+      sampleCounterpartName: "小林",
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.mode, "ai");
+    assert.match(payload.sampleProfile, /短句|拒绝/);
+    assert.match(capturedBody.input, /周六有空吗/);
+    assert.match(capturedBody.instructions, /只分析对方的发言/);
+    assert.equal(capturedBody.text.format.schema.properties.sampleProfile.maxLength, 1200);
+    assert.equal(capturedBody.store, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalApiKey;
+  }
 });
 
 test("conversation fallback uses the remembered personality instead of one generic reply", async () => {
@@ -289,11 +346,11 @@ test("the semantic judge rewrites a question loop into a clear successful decisi
   try {
     const inviteMemory = {
       ...memory,
-      context: "我想约她周末出去。",
-      counterpartWords: "她之前说最近想看一部电影。",
+      context: "我想约对方周末出去。",
+      counterpartWords: "对方之前说最近想看一部电影。",
       counterpartEmotion: "平静",
       counterpartReaction: "追问细节",
-      desiredOutcome: "她答应周六和我一起看电影。",
+      desiredOutcome: "对方答应周六和我一起看电影。",
     };
     const response = await requestConversation(worker, [
       { role: "user", text: "周六一起看电影吗？" },

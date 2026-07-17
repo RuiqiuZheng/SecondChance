@@ -429,6 +429,10 @@ a:focus-visible {
   font-size: 1.08rem;
 }
 
+.compact-input {
+  height: 60px;
+}
+
 .large-textarea,
 .medium-textarea {
   resize: vertical;
@@ -442,6 +446,82 @@ a:focus-visible {
 
 .medium-textarea {
   min-height: 110px;
+}
+
+.sample-textarea {
+  min-height: 210px;
+  font-family: inherit;
+}
+
+.sample-import-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.7rem 0.9rem;
+  margin-top: 1rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.file-picker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 650;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.file-picker:hover,
+.file-picker:focus-within {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.sample-clear {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--orange-dark);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sample-status,
+.sample-privacy-note {
+  margin: 0.9rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.sample-status {
+  color: var(--ink);
+}
+
+.sample-privacy-note {
+  padding: 0.9rem 1rem;
+  border-left: 3px solid rgba(213, 101, 55, 0.45);
+  background: rgba(255, 253, 248, 0.65);
+  color: var(--ink-soft);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 .second-label {
