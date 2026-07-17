@@ -474,6 +474,10 @@ a:focus-visible {
   margin-top: 1.8rem;
 }
 
+.persona-fieldset {
+  margin-top: 1.35rem;
+}
+
 .choice-grid {
   display: grid;
   gap: 0.75rem;
@@ -484,6 +488,10 @@ a:focus-visible {
 }
 
 .length-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.persona-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -1045,7 +1053,8 @@ a:focus-visible {
   }
 
   .tone-grid,
-  .length-grid {
+  .length-grid,
+  .persona-grid {
     grid-template-columns: 1fr;
   }
 
