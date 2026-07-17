@@ -646,6 +646,14 @@ a:focus-visible {
   background: #6e9f82;
 }
 
+.chat-person-header div span.conversation-stopped {
+  color: var(--orange-dark);
+}
+
+.chat-person-header div span.conversation-stopped i {
+  background: var(--orange);
+}
+
 .simulation-badge {
   padding: 0.38rem 0.65rem;
   border: 1px solid rgba(213, 101, 55, 0.22);
@@ -810,6 +818,38 @@ a:focus-visible {
   color: var(--white);
 }
 
+.conversation-end-card {
+  margin: 2.2rem auto 0.6rem;
+  padding: 1.5rem;
+  border: 1px solid rgba(213, 101, 55, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(213, 101, 55, 0.07), rgba(157, 181, 168, 0.12));
+  text-align: center;
+}
+
+.conversation-end-card .eyebrow {
+  margin-bottom: 0.65rem;
+}
+
+.conversation-end-card h2 {
+  margin: 0;
+  font-family: var(--font-serif), serif;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+
+.conversation-end-card > p:not(.eyebrow) {
+  margin: 0.75rem auto;
+  color: var(--ink-soft);
+  line-height: 1.75;
+}
+
+.conversation-end-card small {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  line-height: 1.6;
+}
+
 .typing-indicator {
   display: flex;
   min-width: 66px;
@@ -852,6 +892,24 @@ a:focus-visible {
   color: var(--orange-dark);
   text-align: center;
   font-size: 0.68rem;
+}
+
+.chat-terminal-actions {
+  padding: 1rem;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.95);
+}
+
+.chat-terminal-actions > div:last-child {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.chat-terminal-actions .primary-button,
+.chat-terminal-actions .secondary-button {
+  min-height: 44px;
+  padding: 0.7rem 1rem;
 }
 
 .composer-box {
@@ -1121,6 +1179,16 @@ a:focus-visible {
   .chat-composer {
     position: sticky;
     bottom: 0;
+  }
+
+  .chat-terminal-actions > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-terminal-actions .primary-button,
+  .chat-terminal-actions .secondary-button {
+    width: 100%;
   }
 
   .composer-footer > span {

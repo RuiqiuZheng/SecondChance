@@ -4,6 +4,9 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Tone = "温和真诚" | "直接坦率" | "坚定有边界" | "平静克制";
 type ReplyLength = "简短" | "适中" | "详细";
+type ConversationStatus = "continue" | "paused" | "ended";
+type EndReason = "none" | "resolved" | "needs_space" | "counterpart_ended" | "stalled" | "safety";
+type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "pause" | "end";
 type CounterpartEmotion = "不确定" | "平静" | "生气" | "难过" | "防备" | "冷淡" | "犹豫";
 type CounterpartOpenness = "不确定" | "想说清楚" | "愿意听但会反驳" | "犹豫观望" | "倾向回避" | "不想继续";
 type CounterpartReaction = "不确定" | "追问细节" | "马上反驳" | "沉默很久" | "转移话题" | "很快结束";
@@ -45,6 +48,9 @@ type ChatMessage = {
 
 type ConversationResponse = {
   reply: string;
+  status: ConversationStatus;
+  endReason: EndReason;
+  turnAction: TurnAction;
   mode: "ai" | "demo";
   notice?: string;
   error?: string;
@@ -88,6 +94,9 @@ export function SecondReplyApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [chatMode, setChatMode] = useState<"ai" | "demo" | null>(null);
+  const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("continue");
+  const [endReason, setEndReason] = useState<EndReason>("none");
+  const [chatNotice, setChatNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -165,6 +174,9 @@ export function SecondReplyApp() {
       setMessages([]);
       setDraft("");
       setChatMode(null);
+      setConversationStatus("continue");
+      setEndReason("none");
+      setChatNotice("");
       setView("chat");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "暂时没能准备这段对话，请稍后再试。");
@@ -176,7 +188,7 @@ export function SecondReplyApp() {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || loading) return;
+    if (!text || loading || conversationStatus !== "continue") return;
 
     const userMessage: ChatMessage = { id: messageId("user"), role: "user", text };
     const nextMessages = [...messages, userMessage];
@@ -203,11 +215,27 @@ export function SecondReplyApp() {
         { id: messageId("counterpart"), role: "counterpart", text: payload.reply },
       ]);
       setChatMode(payload.mode);
+      setConversationStatus(payload.status);
+      setEndReason(payload.endReason);
+      setChatNotice(payload.notice ?? "");
+      if (payload.status !== "continue") setDraft("");
     } catch (caught) {
+      setMessages((current) => current.filter((message) => message.id !== userMessage.id));
+      setDraft(text);
       setError(caught instanceof Error ? caught.message : "暂时没能生成她的回复，请稍后再试。");
     } finally {
       setLoading(false);
     }
+  }
+
+  function restartConversation() {
+    setMessages([]);
+    setDraft("");
+    setChatMode(null);
+    setConversationStatus("continue");
+    setEndReason("none");
+    setChatNotice("");
+    setError("");
   }
 
   function reset() {
@@ -216,6 +244,9 @@ export function SecondReplyApp() {
     setMessages([]);
     setDraft("");
     setChatMode(null);
+    setConversationStatus("continue");
+    setEndReason("none");
+    setChatNotice("");
     setStep(0);
     setView("intro");
     setError("");
@@ -274,6 +305,21 @@ export function SecondReplyApp() {
       { label: "先把边界说清楚", text: starter.firmReply },
     ];
     const isDemo = starter.mode === "demo" || chatMode === "demo";
+    const modeNotice = chatNotice || starter.notice || (isDemo ? "当前包含本地模拟内容；配置有效的 AI Key 后会优先使用 AI 回复。" : "");
+    const statusLabel = conversationStatus === "continue"
+      ? "对话练习中"
+      : conversationStatus === "paused"
+        ? "这次对话已暂停"
+        : "这次对话已结束";
+    const terminalCopy = endReason === "resolved"
+      ? { eyebrow: "A POSSIBLE ARRIVAL · 一种抵达", title: "这次对话走到了一个结果。", body: "核心意思已经得到回应。你可以停在这里，也可以换一种说法重新练习。" }
+      : endReason === "needs_space"
+        ? { eyebrow: "A PAUSE · 一次暂停", title: "她现在需要一点空间。", body: "尊重暂停也是对话的一部分。这个结果只是模拟的一种可能。" }
+        : endReason === "counterpart_ended"
+          ? { eyebrow: "THE END · 到这里", title: "她结束了这次对话。", body: "结束不等于你的表达没有意义。你仍然可以换一种开场，看看另一条可能的路径。" }
+          : endReason === "safety"
+            ? { eyebrow: "SAFETY FIRST · 先保护自己", title: "这次模拟已停止。", body: "如果现实中存在迫近的危险，请离开现场并联系可信任的人或当地紧急服务。" }
+            : { eyebrow: "A PAUSE · 先停一下", title: "继续说下去可能只是在重复。", body: "停在这里比换一种说法继续循环更接近真实对话。你可以重新练习另一种表达。" };
 
     return (
       <main className="app-shell chat-page">
@@ -294,7 +340,7 @@ export function SecondReplyApp() {
               <span className="chat-avatar" aria-hidden="true">她</span>
               <div>
                 <strong>{form.relationship}</strong>
-                <span><i /> 对话练习中</span>
+                <span className={conversationStatus === "continue" ? "" : "conversation-stopped"}><i /> {statusLabel}</span>
               </div>
               <span className="simulation-badge">可能回复</span>
             </header>
@@ -339,40 +385,56 @@ export function SecondReplyApp() {
                       </div>
                     </article>
                   )}
+                  {conversationStatus !== "continue" && (
+                    <section className="conversation-end-card" role="status">
+                      <p className="eyebrow">{terminalCopy.eyebrow}</p>
+                      <h2>{terminalCopy.title}</h2>
+                      <p>{terminalCopy.body}</p>
+                      <small>模拟结束只代表这一条练习分支，不代表真实人物最终会这样回应。</small>
+                    </section>
+                  )}
                 </div>
               )}
               <div ref={chatEndRef} />
             </div>
 
-            <form className="chat-composer" onSubmit={sendMessage}>
-              {isDemo && (
-                <div className="demo-strip">当前是本地草稿模式；配置 AI Key 后，她的回复会由 AI 生成。</div>
-              )}
-              <label htmlFor="chat-draft">你想说的话</label>
-              <div className="composer-box">
-                <textarea
-                  id="chat-draft"
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  placeholder="写下这一次你真正想说的话……"
-                  maxLength={1200}
-                  rows={3}
-                />
-                <div className="composer-footer">
-                  <span>{draft.length} / 1200 · Shift + Enter 换行</span>
-                  <button disabled={loading || !draft.trim()}>
-                    {loading ? "等待她回复…" : "说给她听"} <span aria-hidden="true">↑</span>
-                  </button>
+            {conversationStatus === "continue" ? (
+              <form className="chat-composer" onSubmit={sendMessage}>
+                {modeNotice && <div className="demo-strip">{modeNotice}</div>}
+                <label htmlFor="chat-draft">你想说的话</label>
+                <div className="composer-box">
+                  <textarea
+                    id="chat-draft"
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
+                    placeholder="写下这一次你真正想说的话……"
+                    maxLength={1200}
+                    rows={3}
+                  />
+                  <div className="composer-footer">
+                    <span>{draft.length} / 1200 · Shift + Enter 换行</span>
+                    <button disabled={loading || !draft.trim()}>
+                      {loading ? "等待她回复…" : "说给她听"} <span aria-hidden="true">↑</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              {error && <p className="error-message" role="alert">{error}</p>}
-            </form>
+                {error && <p className="error-message" role="alert">{error}</p>}
+              </form>
+            ) : (
+              <section className="chat-terminal-actions" aria-label="练习结束后的操作">
+                {modeNotice && <div className="demo-strip">{modeNotice}</div>}
+                <div>
+                  <button type="button" className="secondary-button" onClick={restartConversation}>换一种说法再练一次</button>
+                  <button type="button" className="primary-button" onClick={() => { setView("questions"); setStep(0); }}>修改记忆</button>
+                </div>
+              </section>
+            )}
           </div>
 
           <aside className="scene-sidebar">
