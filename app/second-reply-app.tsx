@@ -179,7 +179,20 @@ export function SecondReplyApp() {
   const [sampleImportNotice, setSampleImportNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [voiceLoadingId, setVoiceLoadingId] = useState<string | null>(null);
+  const [voicePlayingId, setVoicePlayingId] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState("");
+  const [voiceCacheStatus, setVoiceCacheStatus] = useState<Record<string, "loading" | "ready" | "error">>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceCacheRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    const cache = voiceCacheRef.current;
+    return () => {
+      Object.values(cache).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   const progress = Math.round(((step + 1) / totalSteps) * 100);
 
@@ -339,10 +352,12 @@ export function SecondReplyApp() {
       if (!response.ok) {
         throw new Error(payload.error || "Couldn't generate the other person's reply right now. Please try again later.");
       }
+      const counterpartId = messageId("counterpart");
       setMessages((current) => [
         ...current,
-        { id: messageId("counterpart"), role: "counterpart", text: payload.reply },
+        { id: counterpartId, role: "counterpart", text: payload.reply },
       ]);
+      prefetchVoice(counterpartId, payload.reply);
       setChatMode(payload.mode);
       setConversationStatus(payload.status);
       setEndReason(payload.endReason);
@@ -354,6 +369,85 @@ export function SecondReplyApp() {
       setError(caught instanceof Error ? caught.message : "Couldn't generate the other person's reply right now. Please try again later.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchVoice(text: string): Promise<string> {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || "Couldn't generate voice for this line.");
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  // Fired right when a counterpart message lands, so the audio is already
+  // cached by the time the user taps play — no wait on click.
+  function prefetchVoice(id: string, text: string) {
+    if (voiceCacheRef.current[id]) return;
+    setVoiceCacheStatus((current) => ({ ...current, [id]: "loading" }));
+    fetchVoice(text)
+      .then((url) => {
+        voiceCacheRef.current[id] = url;
+        setVoiceCacheStatus((current) => ({ ...current, [id]: "ready" }));
+      })
+      .catch(() => {
+        setVoiceCacheStatus((current) => ({ ...current, [id]: "error" }));
+      });
+  }
+
+  async function playMessage(id: string, text: string) {
+    if (voiceLoadingId) return;
+
+    if (voicePlayingId === id && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setVoicePlayingId(null);
+      return;
+    }
+
+    setVoiceError("");
+    const cached = voiceCacheRef.current[id];
+    if (cached) {
+      audioRef.current?.pause();
+      const audio = new Audio(cached);
+      audioRef.current = audio;
+      audio.onended = () => setVoicePlayingId(null);
+      audio.onerror = () => {
+        setVoiceError("Playback failed.");
+        setVoicePlayingId(null);
+      };
+      await audio.play();
+      setVoicePlayingId(id);
+      return;
+    }
+
+    // Not cached yet (prefetch still running or failed) — fetch on demand.
+    setVoiceLoadingId(id);
+    try {
+      const url = await fetchVoice(text);
+      voiceCacheRef.current[id] = url;
+      setVoiceCacheStatus((current) => ({ ...current, [id]: "ready" }));
+
+      audioRef.current?.pause();
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setVoicePlayingId(null);
+      audio.onerror = () => {
+        setVoiceError("Playback failed.");
+        setVoicePlayingId(null);
+      };
+      await audio.play();
+      setVoicePlayingId(id);
+    } catch (caught) {
+      setVoiceError(caught instanceof Error ? caught.message : "Couldn't generate voice for this line.");
+    } finally {
+      setVoiceLoadingId(null);
     }
   }
 
@@ -469,9 +563,27 @@ export function SecondReplyApp() {
                       <div>
                         <span className="message-author">{message.role === "user" ? "You" : form.relationship}</span>
                         <p>{message.text}</p>
+                        {message.role === "counterpart" && (
+                          <button
+                            type="button"
+                            className={`voice-play-button${voiceCacheStatus[message.id] === "loading" ? " voice-pending" : ""}`}
+                            onClick={() => playMessage(message.id, message.text)}
+                            disabled={voiceLoadingId === message.id}
+                            aria-label={voicePlayingId === message.id ? "Stop playback" : "Play this reply"}
+                          >
+                            {voiceLoadingId === message.id
+                              ? "…"
+                              : voicePlayingId === message.id
+                                ? "■ Stop"
+                                : voiceCacheStatus[message.id] === "loading"
+                                  ? "◌ Voice ready shortly"
+                                  : "▶ Play"}
+                          </button>
+                        )}
                       </div>
                     </article>
                   ))}
+                  {voiceError && <p className="error-message voice-error" role="alert">{voiceError}</p>}
                   {loading && (
                     <article className="message-row counterpart" aria-label="The other person is replying">
                       <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>

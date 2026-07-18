@@ -898,6 +898,31 @@ a:focus-visible {
   color: var(--white);
 }
 
+.voice-play-button {
+  align-self: flex-start;
+  margin: 0 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--sage, #9db89d);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.voice-play-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.voice-play-button.voice-pending {
+  opacity: 0.65;
+}
+
+.voice-error {
+  margin: 0 0.35rem;
+}
+
 .conversation-end-card {
   margin: 2.2rem auto 0.6rem;
   padding: 1.5rem;
