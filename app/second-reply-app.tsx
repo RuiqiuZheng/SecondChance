@@ -88,6 +88,51 @@ const lengthOptions: ReplyLength[] = ["Short", "Medium", "Detailed"];
 const emotionOptions: CounterpartEmotion[] = ["Unsure", "Calm", "Angry", "Sad", "Guarded", "Cold", "Hesitant"];
 const opennessOptions: CounterpartOpenness[] = ["Unsure", "Wants to clear things up", "Will listen but push back", "Hesitant and watchful", "Tends to avoid", "Doesn't want to continue"];
 const reactionOptions: CounterpartReaction[] = ["Unsure", "Presses for details", "Pushes back immediately", "Goes quiet for a while", "Changes the subject", "Ends it quickly"];
+// Regretful / rejection lines that flash across the opening black screen.
+// Balanced across the situations users bring here: general regret, silence
+// and distance, breakups, job rejection, family, loss, friendship, apology,
+// speaking up at work, and a thread of hope for a second chance.
+const regretLines = [
+  // general regret / hindsight
+  "I should have said something",
+  "I saw it only when it was gone",
+  "Too late, but not never",
+  // silence and distance
+  "I noticed the silence",
+  "I let the distance grow",
+  "Some silences last forever",
+  // breakups
+  "Let's just be friends",
+  "We just grew apart",
+  "It doesn't have to end here",
+  // job / application rejection
+  "After careful consideration…",
+  "We're moving forward with other candidates",
+  // effort and worth
+  "I tried my best",
+  "I gave too much",
+  // family
+  "I never told them how much they mattered",
+  "I should have called more",
+  "I never thanked you",
+  // loss / goodbye
+  "I never got to say goodbye",
+  "I thought there'd be more time",
+  "You were gone before I could speak",
+  // friendship
+  "We just stopped talking",
+  "I let a good friend slip away",
+  // apology
+  "I never said I was sorry",
+  "The apology came too late",
+  "You waited for words that never came",
+  // speaking up at work
+  "I should have spoken up",
+  "I never asked for what I deserved",
+  // a second chance
+  "Maybe this time",
+  "What could still be saved",
+];
 const totalSteps = 11;
 const maxSampleFileBytes = 200 * 1024;
 const maxSampleCharacters = 16_000;
@@ -120,6 +165,7 @@ function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
 
 export function SecondReplyApp() {
   const [view, setView] = useState<"intro" | "questions" | "chat">("intro");
+  const [introPhase, setIntroPhase] = useState<"regret" | "reveal">("regret");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<MemoryForm>(initialForm);
   const [starter, setStarter] = useState<StarterResult | null>(null);
@@ -142,6 +188,13 @@ export function SecondReplyApp() {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages, loading, view]);
+
+  useEffect(() => {
+    if (view === "intro" && introPhase === "regret") {
+      const timer = setTimeout(() => setIntroPhase("reveal"), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [view, introPhase]);
 
   const canContinue = useMemo(() => {
     switch (step) {
@@ -332,46 +385,16 @@ export function SecondReplyApp() {
 
   if (view === "intro") {
     return (
-      <main className="intro-shell">
-        <header className="site-header">
-          <a className="brand" href="#top" aria-label="Second Reply home">
-            <span className="brand-mark" aria-hidden="true">Ⅱ</span>
-            <span>Second Reply</span>
-          </a>
-          <span className="privacy-chip"><span aria-hidden="true">●</span> This session is not saved in your browser</span>
-        </header>
-
-        <section className="intro" id="top">
-          <div className="intro-copy">
-            <p className="eyebrow">REPLAY THE MOMENT · Choose again</p>
-            <h1>If you could go back<br />into that conversation.</h1>
-            <p className="intro-lede">
-              You choose what to say this time, and the AI simulates one way the other person might respond. Not to rewrite the past, but to let this conversation keep going.
-            </p>
-            <button className="primary-button intro-button" onClick={() => setView("questions")}>
-              Go back to that moment <span aria-hidden="true">→</span>
-            </button>
-            <p className="microcopy">About 6 minutes · 11 questions · A continuous conversation</p>
-          </div>
-
-          <div className="moment-card" aria-label="Product flow preview">
-            <span className="moment-number">02</span>
-            <div className="moment-line" />
-            <p>&ldquo;This time you speak first,<br />then hear one possibility.&rdquo;</p>
-            <div className="moment-steps" aria-hidden="true">
-              <span className="active">Remember</span>
-              <i />
-              <span>You speak</span>
-              <i />
-              <span>They respond</span>
-            </div>
-          </div>
-        </section>
-
-        <footer className="intro-footer">
-          <span>Your memories are yours</span>
-          <span>A simulated reply is not what the real person thinks</span>
-        </footer>
+      <main className={`cinematic-intro ${introPhase}`}>
+        <div className="regret-layer" aria-hidden={introPhase !== "regret"}>
+          <RegretWall active={introPhase === "regret"} />
+        </div>
+        <div className="reveal-layer">
+          <h1 className="reveal-headline">now you have a second chance</h1>
+          <button className="primary-button reveal-button" onClick={() => setView("questions")}>
+            Continue <span aria-hidden="true">→</span>
+          </button>
+        </div>
       </main>
     );
   }
@@ -741,6 +764,71 @@ function QuestionFrame({ number, title, hint, children }: { number: string; titl
       <h1>{title}</h1>
       <p className="question-hint">{hint}</p>
       <div className="question-fields">{children}</div>
+    </div>
+  );
+}
+
+// Brick-wall grid the regret phrases flash through. Fixed cells (rather than
+// random offsets) keep phrases from overlapping; each phrase occupies a free
+// cell for one fade cycle, then frees it.
+const WALL_COLS = 5;
+const WALL_ROWS = 6;
+const WALL_CELLS = WALL_COLS * WALL_ROWS;
+const WALL_DENSITY = 16;
+const FLASH_LIFETIME = 1500;
+
+type RegretFlash = { id: number; cell: number; born: number; text: string; top: string; left: string };
+
+function makeFlash(id: number, cell: number, born: number): RegretFlash {
+  const row = Math.floor(cell / WALL_COLS);
+  const col = cell % WALL_COLS;
+  // Cell centers; the phrase is centered on this point (see .regret-flash).
+  // Odd/even rows shift opposite ways for a brick-like stagger.
+  const brickShift = row % 2 === 0 ? -4 : 4;
+  return {
+    id,
+    cell,
+    born,
+    text: regretLines[Math.floor(Math.random() * regretLines.length)],
+    top: `${8 + row * 15}%`,
+    left: `${12 + col * 19 + brickShift}%`,
+  };
+}
+
+function RegretWall({ active }: { active: boolean }) {
+  // Start empty so server and client render the same markup; the random
+  // placements are only generated on the client after mount to avoid a
+  // hydration mismatch (Math.random() differs between server and client).
+  const [flashes, setFlashes] = useState<RegretFlash[]>([]);
+  const nextId = useRef(0);
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setFlashes((current) => {
+        const alive = current.filter((flash) => now - flash.born < FLASH_LIFETIME);
+        if (alive.length >= WALL_DENSITY) return alive;
+        const occupied = new Set(alive.map((flash) => flash.cell));
+        let cell = Math.floor(Math.random() * WALL_CELLS);
+        for (let attempt = 0; attempt < 8 && occupied.has(cell); attempt += 1) {
+          cell = Math.floor(Math.random() * WALL_CELLS);
+        }
+        if (occupied.has(cell)) return alive;
+        alive.push(makeFlash(nextId.current++, cell, now));
+        return alive;
+      });
+    }, 100);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  return (
+    <div className="regret-wall" aria-hidden="true">
+      {flashes.map((flash) => (
+        <span key={flash.id} className="regret-flash" style={{ top: flash.top, left: flash.left }}>
+          {flash.text}
+        </span>
+      ))}
     </div>
   );
 }
