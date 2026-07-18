@@ -919,6 +919,12 @@ a:focus-visible {
   opacity: 0.65;
 }
 
+.quickstart-row {
+  margin-top: 1.6rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--line);
+}
+
 .voice-error {
   margin: 0 0.35rem;
 }
