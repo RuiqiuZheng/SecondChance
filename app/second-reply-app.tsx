@@ -726,20 +726,28 @@ function QuestionFrame({ number, title, hint, children }: { number: string; titl
   );
 }
 
-const wallRows = 6;
+// Brick-wall grid the regret phrases flash through. Fixed cells (rather than
+// random offsets) keep phrases from overlapping; each phrase occupies a free
+// cell for one fade cycle, then frees it.
+const WALL_COLS = 5;
+const WALL_ROWS = 6;
+const WALL_CELLS = WALL_COLS * WALL_ROWS;
+const WALL_DENSITY = 16;
+const FLASH_LIFETIME = 1500;
 
-type RegretFlash = { sequence: number; text: string; top: string; left: string };
+type RegretFlash = { id: number; cell: number; born: number; text: string; top: string; left: string };
 
-// One regret phrase placed on a brick-wall cell. Odd rows are indented so the
-// rows stagger like bricks; every call reshuffles position and phrase.
-function makeFlash(sequence: number): RegretFlash {
-  const row = Math.floor(Math.random() * wallRows);
-  const indent = row % 2 === 0 ? 8 : 22;
+function makeFlash(id: number, cell: number, born: number): RegretFlash {
+  const row = Math.floor(cell / WALL_COLS);
+  const col = cell % WALL_COLS;
+  const brickShift = row % 2 === 0 ? 0 : 9;
   return {
-    sequence,
+    id,
+    cell,
+    born,
     text: regretLines[Math.floor(Math.random() * regretLines.length)],
-    top: `${6 + row * 15}%`,
-    left: `${indent + Math.floor(Math.random() * 16)}%`,
+    top: `${5 + row * 15}%`,
+    left: `${4 + col * 18 + brickShift}%`,
   };
 }
 
@@ -748,26 +756,32 @@ function RegretWall({ active }: { active: boolean }) {
   // placements are only generated on the client after mount to avoid a
   // hydration mismatch (Math.random() differs between server and client).
   const [flashes, setFlashes] = useState<RegretFlash[]>([]);
+  const nextId = useRef(0);
 
   useEffect(() => {
     if (!active) return;
-    let sequence = 0;
     const timer = setInterval(() => {
+      const now = Date.now();
       setFlashes((current) => {
-        const next = [...current];
-        if (next.length < 6) next.push(makeFlash(sequence));
-        else next[sequence % next.length] = makeFlash(sequence);
-        sequence += 1;
-        return next;
+        const alive = current.filter((flash) => now - flash.born < FLASH_LIFETIME);
+        if (alive.length >= WALL_DENSITY) return alive;
+        const occupied = new Set(alive.map((flash) => flash.cell));
+        let cell = Math.floor(Math.random() * WALL_CELLS);
+        for (let attempt = 0; attempt < 8 && occupied.has(cell); attempt += 1) {
+          cell = Math.floor(Math.random() * WALL_CELLS);
+        }
+        if (occupied.has(cell)) return alive;
+        alive.push(makeFlash(nextId.current++, cell, now));
+        return alive;
       });
-    }, 250);
+    }, 100);
     return () => clearInterval(timer);
   }, [active]);
 
   return (
     <div className="regret-wall" aria-hidden="true">
       {flashes.map((flash) => (
-        <span key={flash.sequence} className="regret-flash" style={{ top: flash.top, left: flash.left }}>
+        <span key={flash.id} className="regret-flash" style={{ top: flash.top, left: flash.left }}>
           {flash.text}
         </span>
       ))}
