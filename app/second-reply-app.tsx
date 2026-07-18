@@ -165,7 +165,7 @@ function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
 
 export function SecondReplyApp() {
   const [view, setView] = useState<"intro" | "questions" | "chat">("intro");
-  const [introPhase, setIntroPhase] = useState<"regret" | "reveal">("regret");
+  const [introPhase, setIntroPhase] = useState<"regret" | "pause" | "reveal">("regret");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<MemoryForm>(initialForm);
   const [starter, setStarter] = useState<StarterResult | null>(null);
@@ -190,10 +190,11 @@ export function SecondReplyApp() {
   }, [messages, loading, view]);
 
   useEffect(() => {
-    if (view === "intro" && introPhase === "regret") {
-      const timer = setTimeout(() => setIntroPhase("reveal"), 4000);
+    if (view !== "intro" || introPhase === "reveal") return;
+    const timer = setTimeout(() => {
+      setIntroPhase((phase) => phase === "regret" ? "pause" : "reveal");
+    }, introPhase === "regret" ? 4000 : 1100);
       return () => clearTimeout(timer);
-    }
   }, [view, introPhase]);
 
   const canContinue = useMemo(() => {
@@ -379,6 +380,7 @@ export function SecondReplyApp() {
     setSampleFileName("");
     setSampleImportNotice("");
     setStep(0);
+    setIntroPhase("regret");
     setView("intro");
     setError("");
   }
@@ -390,9 +392,11 @@ export function SecondReplyApp() {
           <RegretWall active={introPhase === "regret"} />
         </div>
         <div className="reveal-layer">
-          <h1 className="reveal-headline">now you have a second chance</h1>
-          <button className="primary-button reveal-button" onClick={() => setView("questions")}>
-            Continue <span aria-hidden="true">→</span>
+          <p className="reveal-kicker">THE NEXT WORD IS YOURS</p>
+          <h1 className="reveal-headline"><span className="reveal-now">NOW</span><span className="reveal-rest"> you can have<br />a second chance.</span></h1>
+          <p className="reveal-copy">Return to the moment, and find the words you want to say.</p>
+          <button className="reveal-button" onClick={() => setView("questions")}>
+            <span>Continue</span> <span className="reveal-arrow" aria-hidden="true">→</span>
           </button>
         </div>
       </main>
@@ -768,14 +772,14 @@ function QuestionFrame({ number, title, hint, children }: { number: string; titl
   );
 }
 
-// Brick-wall grid the regret phrases flash through. Fixed cells (rather than
-// random offsets) keep phrases from overlapping; each phrase occupies a free
-// cell for one fade cycle, then frees it.
-const WALL_COLS = 5;
+// Brick-wall grid the regret phrases flash through. Fixed cells keep the
+// simultaneous phrases separated while each one completes its own fade cycle.
+const WALL_COLS = 3;
 const WALL_ROWS = 6;
 const WALL_CELLS = WALL_COLS * WALL_ROWS;
 const WALL_DENSITY = 16;
-const FLASH_LIFETIME = 1500;
+const FLASH_LIFETIME = 1700;
+const FLASH_INTERVAL = 100;
 
 type RegretFlash = { id: number; cell: number; born: number; text: string; top: string; left: string };
 
@@ -784,14 +788,14 @@ function makeFlash(id: number, cell: number, born: number): RegretFlash {
   const col = cell % WALL_COLS;
   // Cell centers; the phrase is centered on this point (see .regret-flash).
   // Odd/even rows shift opposite ways for a brick-like stagger.
-  const brickShift = row % 2 === 0 ? -4 : 4;
+  const brickShift = row % 2 === 0 ? -3 : 3;
   return {
     id,
     cell,
     born,
     text: regretLines[Math.floor(Math.random() * regretLines.length)],
     top: `${8 + row * 15}%`,
-    left: `${12 + col * 19 + brickShift}%`,
+    left: `${18 + col * 32 + brickShift}%`,
   };
 }
 
@@ -804,7 +808,7 @@ function RegretWall({ active }: { active: boolean }) {
 
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(() => {
+    const addFlash = () => {
       const now = Date.now();
       setFlashes((current) => {
         const alive = current.filter((flash) => now - flash.born < FLASH_LIFETIME);
@@ -818,7 +822,8 @@ function RegretWall({ active }: { active: boolean }) {
         alive.push(makeFlash(nextId.current++, cell, now));
         return alive;
       });
-    }, 100);
+    };
+    const timer = setInterval(addFlash, FLASH_INTERVAL);
     return () => clearInterval(timer);
   }, [active]);
 
