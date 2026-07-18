@@ -88,9 +88,51 @@ const lengthOptions: ReplyLength[] = ["Short", "Medium", "Detailed"];
 const emotionOptions: CounterpartEmotion[] = ["Unsure", "Calm", "Angry", "Sad", "Guarded", "Cold", "Hesitant"];
 const opennessOptions: CounterpartOpenness[] = ["Unsure", "Wants to clear things up", "Will listen but push back", "Hesitant and watchful", "Tends to avoid", "Doesn't want to continue"];
 const reactionOptions: CounterpartReaction[] = ["Unsure", "Presses for details", "Pushes back immediately", "Goes quiet for a while", "Changes the subject", "Ends it quickly"];
-// Regretful lines that surge in during the opening black screen.
-// Placeholder copy for now — swap for the real phrases later.
-const regretLines = ["aaaaaa", "bbbbb", "cccc", "ddd"];
+// Regretful / rejection lines that flash across the opening black screen.
+// Balanced across the situations users bring here: general regret, silence
+// and distance, breakups, job rejection, family, loss, friendship, apology,
+// speaking up at work, and a thread of hope for a second chance.
+const regretLines = [
+  // general regret / hindsight
+  "I should have said something",
+  "I saw it only when it was gone",
+  "Too late, but not never",
+  // silence and distance
+  "I noticed the silence",
+  "I let the distance grow",
+  "Some silences last forever",
+  // breakups
+  "Let's just be friends",
+  "We just grew apart",
+  "It doesn't have to end here",
+  // job / application rejection
+  "After careful consideration…",
+  "We're moving forward with other candidates",
+  // effort and worth
+  "I tried my best",
+  "I gave too much",
+  // family
+  "I never told them how much they mattered",
+  "I should have called more",
+  "I never thanked you",
+  // loss / goodbye
+  "I never got to say goodbye",
+  "I thought there'd be more time",
+  "You were gone before I could speak",
+  // friendship
+  "We just stopped talking",
+  "I let a good friend slip away",
+  // apology
+  "I never said I was sorry",
+  "The apology came too late",
+  "You waited for words that never came",
+  // speaking up at work
+  "I should have spoken up",
+  "I never asked for what I deserved",
+  // a second chance
+  "Maybe this time",
+  "What could still be saved",
+];
 const totalSteps = 11;
 const maxSampleFileBytes = 200 * 1024;
 const maxSampleCharacters = 16_000;
@@ -740,14 +782,16 @@ type RegretFlash = { id: number; cell: number; born: number; text: string; top: 
 function makeFlash(id: number, cell: number, born: number): RegretFlash {
   const row = Math.floor(cell / WALL_COLS);
   const col = cell % WALL_COLS;
-  const brickShift = row % 2 === 0 ? 0 : 9;
+  // Cell centers; the phrase is centered on this point (see .regret-flash).
+  // Odd/even rows shift opposite ways for a brick-like stagger.
+  const brickShift = row % 2 === 0 ? -4 : 4;
   return {
     id,
     cell,
     born,
     text: regretLines[Math.floor(Math.random() * regretLines.length)],
-    top: `${5 + row * 15}%`,
-    left: `${4 + col * 18 + brickShift}%`,
+    top: `${8 + row * 15}%`,
+    left: `${12 + col * 19 + brickShift}%`,
   };
 }
 
