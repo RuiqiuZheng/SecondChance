@@ -88,6 +88,9 @@ const lengthOptions: ReplyLength[] = ["Short", "Medium", "Detailed"];
 const emotionOptions: CounterpartEmotion[] = ["Unsure", "Calm", "Angry", "Sad", "Guarded", "Cold", "Hesitant"];
 const opennessOptions: CounterpartOpenness[] = ["Unsure", "Wants to clear things up", "Will listen but push back", "Hesitant and watchful", "Tends to avoid", "Doesn't want to continue"];
 const reactionOptions: CounterpartReaction[] = ["Unsure", "Presses for details", "Pushes back immediately", "Goes quiet for a while", "Changes the subject", "Ends it quickly"];
+// Regretful lines that surge in during the opening black screen.
+// Placeholder copy for now — swap for the real phrases later.
+const regretLines = ["aaaaaa", "bbbbb", "cccc", "ddd"];
 const totalSteps = 11;
 const maxSampleFileBytes = 200 * 1024;
 const maxSampleCharacters = 16_000;
@@ -120,6 +123,7 @@ function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
 
 export function SecondReplyApp() {
   const [view, setView] = useState<"intro" | "questions" | "chat">("intro");
+  const [introPhase, setIntroPhase] = useState<"regret" | "reveal">("regret");
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<MemoryForm>(initialForm);
   const [starter, setStarter] = useState<StarterResult | null>(null);
@@ -142,6 +146,13 @@ export function SecondReplyApp() {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages, loading, view]);
+
+  useEffect(() => {
+    if (view === "intro" && introPhase === "regret") {
+      const timer = setTimeout(() => setIntroPhase("reveal"), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [view, introPhase]);
 
   const canContinue = useMemo(() => {
     switch (step) {
@@ -332,46 +343,16 @@ export function SecondReplyApp() {
 
   if (view === "intro") {
     return (
-      <main className="intro-shell">
-        <header className="site-header">
-          <a className="brand" href="#top" aria-label="Second Reply home">
-            <span className="brand-mark" aria-hidden="true">Ⅱ</span>
-            <span>Second Reply</span>
-          </a>
-          <span className="privacy-chip"><span aria-hidden="true">●</span> This session is not saved in your browser</span>
-        </header>
-
-        <section className="intro" id="top">
-          <div className="intro-copy">
-            <p className="eyebrow">REPLAY THE MOMENT · Choose again</p>
-            <h1>If you could go back<br />into that conversation.</h1>
-            <p className="intro-lede">
-              You choose what to say this time, and the AI simulates one way the other person might respond. Not to rewrite the past, but to let this conversation keep going.
-            </p>
-            <button className="primary-button intro-button" onClick={() => setView("questions")}>
-              Go back to that moment <span aria-hidden="true">→</span>
-            </button>
-            <p className="microcopy">About 6 minutes · 11 questions · A continuous conversation</p>
-          </div>
-
-          <div className="moment-card" aria-label="Product flow preview">
-            <span className="moment-number">02</span>
-            <div className="moment-line" />
-            <p>&ldquo;This time you speak first,<br />then hear one possibility.&rdquo;</p>
-            <div className="moment-steps" aria-hidden="true">
-              <span className="active">Remember</span>
-              <i />
-              <span>You speak</span>
-              <i />
-              <span>They respond</span>
-            </div>
-          </div>
-        </section>
-
-        <footer className="intro-footer">
-          <span>Your memories are yours</span>
-          <span>A simulated reply is not what the real person thinks</span>
-        </footer>
+      <main className={`cinematic-intro ${introPhase}`}>
+        <div className="regret-layer" aria-hidden={introPhase !== "regret"}>
+          <RegretWall active={introPhase === "regret"} />
+        </div>
+        <div className="reveal-layer">
+          <h1 className="reveal-headline">now you have a second chance</h1>
+          <button className="primary-button reveal-button" onClick={() => setView("questions")}>
+            Continue <span aria-hidden="true">→</span>
+          </button>
+        </div>
       </main>
     );
   }
@@ -741,6 +722,55 @@ function QuestionFrame({ number, title, hint, children }: { number: string; titl
       <h1>{title}</h1>
       <p className="question-hint">{hint}</p>
       <div className="question-fields">{children}</div>
+    </div>
+  );
+}
+
+const wallRows = 6;
+
+type RegretFlash = { sequence: number; text: string; top: string; left: string };
+
+// One regret phrase placed on a brick-wall cell. Odd rows are indented so the
+// rows stagger like bricks; every call reshuffles position and phrase.
+function makeFlash(sequence: number): RegretFlash {
+  const row = Math.floor(Math.random() * wallRows);
+  const indent = row % 2 === 0 ? 8 : 22;
+  return {
+    sequence,
+    text: regretLines[Math.floor(Math.random() * regretLines.length)],
+    top: `${6 + row * 15}%`,
+    left: `${indent + Math.floor(Math.random() * 16)}%`,
+  };
+}
+
+function RegretWall({ active }: { active: boolean }) {
+  // Start empty so server and client render the same markup; the random
+  // placements are only generated on the client after mount to avoid a
+  // hydration mismatch (Math.random() differs between server and client).
+  const [flashes, setFlashes] = useState<RegretFlash[]>([]);
+
+  useEffect(() => {
+    if (!active) return;
+    let sequence = 0;
+    const timer = setInterval(() => {
+      setFlashes((current) => {
+        const next = [...current];
+        if (next.length < 6) next.push(makeFlash(sequence));
+        else next[sequence % next.length] = makeFlash(sequence);
+        sequence += 1;
+        return next;
+      });
+    }, 250);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  return (
+    <div className="regret-wall" aria-hidden="true">
+      {flashes.map((flash) => (
+        <span key={flash.sequence} className="regret-flash" style={{ top: flash.top, left: flash.left }}>
+          {flash.text}
+        </span>
+      ))}
     </div>
   );
 }

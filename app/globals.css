@@ -1312,3 +1312,127 @@ a:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Cinematic opening: black regret screen → white "second chance" ── */
+.cinematic-intro {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  overflow: hidden;
+  background: #000;
+  transition: background 1s ease;
+}
+
+.cinematic-intro.reveal {
+  background: var(--white);
+}
+
+.regret-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.6rem, 2.4vh, 1.5rem);
+  padding: 2rem;
+  text-align: center;
+  transition: opacity 0.7s ease;
+}
+
+.cinematic-intro.reveal .regret-layer {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.regret-wall {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 58px, rgba(255, 255, 255, 0.06) 58px 60px),
+    repeating-linear-gradient(90deg, transparent 0 118px, rgba(255, 255, 255, 0.06) 118px 120px);
+}
+
+.regret-flash {
+  position: absolute;
+  margin: 0;
+  opacity: 0;
+  color: rgba(255, 253, 248, 0.9);
+  font-family: var(--font-serif), serif;
+  font-size: clamp(1.1rem, 3.4vw, 2rem);
+  font-weight: 500;
+  letter-spacing: 0.5em;
+  white-space: nowrap;
+  animation: regretFlash 1.5s ease forwards;
+}
+
+.reveal-layer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.2rem;
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.4s ease;
+}
+
+.cinematic-intro.reveal .reveal-layer {
+  opacity: 1;
+  visibility: visible;
+}
+
+.reveal-headline {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif), serif;
+  font-size: clamp(1.9rem, 6vw, 3.4rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  opacity: 0;
+}
+
+.cinematic-intro.reveal .reveal-headline {
+  animation: headlineSlide 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.35s forwards;
+}
+
+.reveal-button {
+  opacity: 0;
+}
+
+.cinematic-intro.reveal .reveal-button {
+  animation: buttonFade 0.7s ease 1.25s forwards;
+}
+
+@keyframes regretFlash {
+  0%   { opacity: 0; }
+  50%  { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+@keyframes headlineSlide {
+  from { opacity: 0; transform: translateX(-46px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes buttonFade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .regret-flash {
+    animation: none;
+    opacity: 0.5;
+  }
+
+  .cinematic-intro.reveal .reveal-headline,
+  .cinematic-intro.reveal .reveal-button {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
