@@ -5,7 +5,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 type Tone = "Warm & sincere" | "Direct & candid" | "Firm with boundaries" | "Calm & measured";
 type ReplyLength = "Short" | "Medium" | "Detailed";
 type ConversationStatus = "continue" | "ended";
-type EndReason = "none" | "max_turns" | "safety";
+type EndReason = "none" | "safety";
 type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "accept" | "decline" | "offer_alternative" | "close" | "end";
 type CounterpartEmotion = "Unsure" | "Calm" | "Angry" | "Sad" | "Guarded" | "Cold" | "Hesitant";
 type CounterpartOpenness = "Unsure" | "Wants to clear things up" | "Will listen but push back" | "Hesitant and watchful" | "Tends to avoid" | "Doesn't want to continue";
@@ -33,11 +33,7 @@ type MemoryForm = {
 };
 
 type StarterResult = {
-  primaryReply: string;
-  gentleReply: string;
-  firmReply: string;
-  reflection: string;
-  assumptions: string[];
+  openingLine: string;
   sampleProfile: string;
   mode: "ai" | "demo";
   notice?: string;
@@ -138,6 +134,13 @@ function messageId(role: ChatMessage["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// This is a replay of the original moment, not a fresh conversation — it
+// opens with the other person's own line, not a blank slate.
+function openingMessages(openingLine: string): ChatMessage[] {
+  const trimmed = openingLine.trim();
+  return trimmed ? [{ id: messageId("counterpart"), role: "counterpart", text: trimmed }] : [];
+}
+
 function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
   return {
     relationship: form.relationship,
@@ -170,7 +173,6 @@ export function SecondReplyApp() {
   const [draft, setDraft] = useState("");
   const [chatMode, setChatMode] = useState<"ai" | "demo" | null>(null);
   const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("continue");
-  const [endReason, setEndReason] = useState<EndReason>("none");
   const [chatNotice, setChatNotice] = useState("");
   const [sampleFileName, setSampleFileName] = useState("");
   const [sampleImportNotice, setSampleImportNotice] = useState("");
@@ -312,11 +314,12 @@ export function SecondReplyApp() {
         throw new Error(payload.error || "Couldn't prepare this conversation right now. Please try again later.");
       }
       setStarter(payload);
-      setMessages([]);
+      const opening = openingMessages(payload.openingLine);
+      setMessages(opening);
+      if (opening[0]) prefetchVoice(opening[0].id, opening[0].text);
       setDraft("");
       setChatMode(null);
       setConversationStatus("continue");
-      setEndReason("none");
       setChatNotice("");
       setView("chat");
     } catch (caught) {
@@ -408,7 +411,6 @@ export function SecondReplyApp() {
       prefetchVoice(counterpartId, payload.reply);
       setChatMode(payload.mode);
       setConversationStatus(payload.status);
-      setEndReason(payload.endReason);
       setChatNotice(payload.notice ?? "");
       if (payload.status !== "continue") setDraft("");
     } catch (caught) {
@@ -500,11 +502,12 @@ export function SecondReplyApp() {
   }
 
   function restartConversation() {
-    setMessages([]);
+    const opening = starter ? openingMessages(starter.openingLine) : [];
+    setMessages(opening);
+    if (opening[0]) prefetchVoice(opening[0].id, opening[0].text);
     setDraft("");
     setChatMode(null);
     setConversationStatus("continue");
-    setEndReason("none");
     setChatNotice("");
     setError("");
   }
@@ -516,7 +519,6 @@ export function SecondReplyApp() {
     setDraft("");
     setChatMode(null);
     setConversationStatus("continue");
-    setEndReason("none");
     setChatNotice("");
     setSampleFileName("");
     setSampleImportNotice("");
@@ -545,18 +547,11 @@ export function SecondReplyApp() {
   }
 
   if (view === "chat" && starter) {
-    const starterChoices = [
-      { label: "Start from the core", text: starter.primaryReply },
-      { label: "A gentler version", text: starter.gentleReply },
-      { label: "State the boundary first", text: starter.firmReply },
-    ];
     const counterpartInitial = form.relationship.trim().charAt(0).toUpperCase() || "•";
     const isDemo = starter.mode === "demo" || chatMode === "demo";
     const modeNotice = chatNotice || starter.notice || (isDemo ? "This includes local simulation. Once a valid AI key is configured, AI replies are used first." : "");
     const statusLabel = conversationStatus === "continue" ? "Practicing" : "This conversation has ended";
-    const terminalCopy = endReason === "max_turns"
-      ? { kind: "max-turns", eyebrow: "END OF PRACTICE", title: "That's a natural place to stop.", body: "You've had a good stretch of this conversation. You can practice again with a different opening whenever you're ready." }
-      : { kind: "safety", eyebrow: "SAFETY FIRST · Protect yourself", title: "This simulation has stopped.", body: "If there is an imminent danger in real life, please leave the situation and contact someone you trust or your local emergency services." };
+    const terminalCopy = { kind: "safety", eyebrow: "SAFETY FIRST · Protect yourself", title: "This simulation has stopped.", body: "If there is an imminent danger in real life, please leave the situation and contact someone you trust or your local emergency services." };
 
     return (
       <main className="app-shell chat-page">
@@ -587,69 +582,53 @@ export function SecondReplyApp() {
             </div>
 
             <div className="chat-scroll" aria-live="polite">
-              {messages.length === 0 ? (
-                <section className="conversation-opening">
-                  <p className="eyebrow">YOUR TURN</p>
-                  <h1>This time, what do you want to say first?</h1>
-                  <p>{starter.reflection} You can write it entirely yourself, or pick a draft first and edit it.</p>
-                  <div className="starter-choices">
-                    {starterChoices.map((choice) => (
-                      <button key={choice.label} onClick={() => setDraft(choice.text)}>
-                        <span>{choice.label}</span>
-                        <p>{choice.text}</p>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ) : (
-                <div className="message-list">
-                  <div className="scene-marker"><span>Back to that moment</span></div>
-                  {messages.map((message) => (
-                    <article className={`message-row ${message.role}`} key={message.id}>
-                      {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>}
-                      <div>
-                        <span className="message-author">{message.role === "user" ? "You" : form.relationship}</span>
-                        <p>{message.text}</p>
-                        {message.role === "counterpart" && (
-                          <button
-                            type="button"
-                            className={`voice-play-button${voiceCacheStatus[message.id] === "loading" ? " voice-pending" : ""}`}
-                            onClick={() => playMessage(message.id, message.text)}
-                            disabled={voiceLoadingId === message.id}
-                            aria-label={voicePlayingId === message.id ? "Stop playback" : "Play this reply"}
-                          >
-                            {voiceLoadingId === message.id
-                              ? "…"
-                              : voicePlayingId === message.id
-                                ? "■ Stop"
-                                : voiceCacheStatus[message.id] === "loading"
-                                  ? "◌ Voice ready shortly"
-                                  : "▶ Play"}
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                  {voiceError && <p className="error-message voice-error" role="alert">{voiceError}</p>}
-                  {loading && (
-                    <article className="message-row counterpart" aria-label="The other person is replying">
-                      <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>
-                      <div>
-                        <span className="message-author">{form.relationship}</span>
-                        <p className="typing-indicator"><i /><i /><i /></p>
-                      </div>
-                    </article>
-                  )}
-                  {conversationStatus !== "continue" && (
-                    <section className={`conversation-end-card ${terminalCopy.kind}`} role="status">
-                      <p className="eyebrow">{terminalCopy.eyebrow}</p>
-                      <h2>{terminalCopy.title}</h2>
-                      <p>{terminalCopy.body}</p>
-                      <small>The end of a simulation reflects only this one practice path, not how the real person would ultimately respond.</small>
-                    </section>
-                  )}
-                </div>
-              )}
+              <div className="message-list">
+                <div className="scene-marker"><span>Back to that moment</span></div>
+                {messages.map((message) => (
+                  <article className={`message-row ${message.role}`} key={message.id}>
+                    {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>}
+                    <div>
+                      <span className="message-author">{message.role === "user" ? "You" : form.relationship}</span>
+                      <p>{message.text}</p>
+                      {message.role === "counterpart" && (
+                        <button
+                          type="button"
+                          className={`voice-play-button${voiceCacheStatus[message.id] === "loading" ? " voice-pending" : ""}`}
+                          onClick={() => playMessage(message.id, message.text)}
+                          disabled={voiceLoadingId === message.id}
+                          aria-label={voicePlayingId === message.id ? "Stop playback" : "Play this reply"}
+                        >
+                          {voiceLoadingId === message.id
+                            ? "…"
+                            : voicePlayingId === message.id
+                              ? "■ Stop"
+                              : voiceCacheStatus[message.id] === "loading"
+                                ? "◌ Voice ready shortly"
+                                : "▶ Play"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+                {voiceError && <p className="error-message voice-error" role="alert">{voiceError}</p>}
+                {loading && (
+                  <article className="message-row counterpart" aria-label="The other person is replying">
+                    <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>
+                    <div>
+                      <span className="message-author">{form.relationship}</span>
+                      <p className="typing-indicator"><i /><i /><i /></p>
+                    </div>
+                  </article>
+                )}
+                {conversationStatus !== "continue" && (
+                  <section className={`conversation-end-card ${terminalCopy.kind}`} role="status">
+                    <p className="eyebrow">{terminalCopy.eyebrow}</p>
+                    <h2>{terminalCopy.title}</h2>
+                    <p>{terminalCopy.body}</p>
+                    <small>The end of a simulation reflects only this one practice path, not how the real person would ultimately respond.</small>
+                  </section>
+                )}
+              </div>
               <div ref={chatEndRef} />
             </div>
 
@@ -703,10 +682,10 @@ export function SecondReplyApp() {
               {form.desiredOutcome && <div><dt>What you want this time</dt><dd>{form.desiredOutcome}</dd></div>}
               {form.boundary && <div><dt>Your boundary</dt><dd>{form.boundary}</dd></div>}
             </dl>
-            {starter.assumptions.length > 0 && (
+            {form.isApproximate && form.counterpartWords && (
               <p className="sidebar-note">What the other person said is treated as &ldquo;the gist as you remember it,&rdquo; not word-for-word quotes.</p>
             )}
-            <p className="turn-count">Practiced {messages.filter((message) => message.role === "user").length} / 20 turns</p>
+            <p className="turn-count">Practiced {messages.filter((message) => message.role === "user").length} turns</p>
           </aside>
         </section>
       </main>
@@ -739,14 +718,20 @@ export function SecondReplyApp() {
         </aside>
 
         <div className="question-card">
-          {renderQuestion(step, form, update, {
-            importConversationSample,
-            clearConversationSample,
-            sampleFileName,
-            sampleImportNotice,
-            onQuickStart: quickStart,
-            quickStartLoading: loading,
-          })}
+          {
+            // quickStart only touches voiceCacheRef inside a click-triggered async
+            // chain (never synchronously during render); the rule can't see that
+            // through the renderQuestion -> onQuickStart indirection.
+            // eslint-disable-next-line react-hooks/refs
+            renderQuestion(step, form, update, {
+              importConversationSample,
+              clearConversationSample,
+              sampleFileName,
+              sampleImportNotice,
+              onQuickStart: quickStart,
+              quickStartLoading: loading,
+            })
+          }
           {error && <p className="error-message" role="alert">{error}</p>}
 
           <div className="question-actions">

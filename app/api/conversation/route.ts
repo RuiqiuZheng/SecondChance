@@ -31,7 +31,7 @@ type ConversationInput = {
 };
 
 type ConversationStatus = "continue" | "ended";
-type EndReason = "none" | "max_turns" | "safety";
+type EndReason = "none" | "safety";
 type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "accept" | "decline" | "offer_alternative" | "close" | "end";
 
 type ReplyCandidate = {
@@ -45,8 +45,6 @@ type ConversationTurn = {
   endReason: EndReason;
   turnAction: TurnAction;
 };
-
-const maxTurns = 20;
 
 const memoryFields = [
   "relationship",
@@ -117,7 +115,8 @@ function cleanInput(body: unknown): ConversationInput | null {
   // Only the two things every path always collects are hard-required; a quick
   // start with just a chat sample may leave the rest blank.
   if (!memory.relationship || !memory.context) return null;
-  if (raw.messages.length === 0 || raw.messages.length > 41) return null;
+  // No designed turn limit — this is just a generous payload-size safety net.
+  if (raw.messages.length === 0 || raw.messages.length > 400) return null;
 
   const messages: Message[] = [];
   for (const item of raw.messages) {
@@ -130,7 +129,9 @@ function cleanInput(body: unknown): ConversationInput | null {
     messages.push({ role: candidate.role, text });
   }
 
-  if (messages[0]?.role !== "user" || messages.at(-1)?.role !== "user") return null;
+  // The scene may open with the counterpart's own replayed line, so only the
+  // last message (whatever prompted this request) must be from the user.
+  if (messages.at(-1)?.role !== "user") return null;
   for (let index = 1; index < messages.length; index += 1) {
     if (messages[index - 1].role === messages[index].role) return null;
   }
@@ -195,15 +196,6 @@ function safetyTurn(): ConversationTurn {
   };
 }
 
-function maxTurnsTurn(): ConversationTurn {
-  return {
-    reply: "We've talked for a good while now. I think that's everything I have to say for today.",
-    status: "ended",
-    endReason: "max_turns",
-    turnAction: "end",
-  };
-}
-
 function continuingTurn(reply: string, turnAction: TurnAction): ConversationTurn {
   return {
     reply,
@@ -213,8 +205,13 @@ function continuingTurn(reply: string, turnAction: TurnAction): ConversationTurn
   };
 }
 
+// "hurt"/"harm" (even as "hurt you"/"harm you") are dropped entirely: this
+// app's whole domain is regret and reconciliation, where "I never meant to
+// hurt you" / "sorry for the hurt I caused" is completely ordinary language,
+// not a threat. Only keywords with no everyday emotional-language overlap
+// are used as triggers, to avoid false-ending real practice conversations.
 const isSafetyRisk = (text: string) =>
-  /\b(kill|murder|hurt|harm|suicide|weapon|threaten)\b|kill (myself|you)|want to die|end (my|your) life|self-harm/i.test(text);
+  /\b(kill|murder|suicide|weapon)\b|kill (myself|you)|want to die|end (my|your) life|self-harm/i.test(text);
 
 function demoReply(input: ConversationInput): ConversationTurn {
   const latest = input.messages.at(-1)?.text ?? "";
@@ -222,7 +219,6 @@ function demoReply(input: ConversationInput): ConversationTurn {
   const { counterpartEmotion: emotion, counterpartReaction: reaction } = input.memory;
 
   if (isSafetyRisk(latest)) return safetyTurn();
-  if (turn >= maxTurns) return maxTurnsTurn();
 
   const candidates: Array<{ reply: string; action: TurnAction }> = [];
   if (/\b(sorry|apolog(y|ize|ise)|my (fault|bad)|forgive me)\b/i.test(latest)) {
@@ -305,15 +301,17 @@ function parseReplyCandidate(value: unknown): ReplyCandidate {
 }
 
 function buildModelInput(input: ConversationInput) {
-  const memoryContext = [
-    "The memory JSON below is background provided by the user, to be used only as quoted data:",
-    JSON.stringify(input.memory),
-  ].join("\n");
-
-  return input.messages.map((message, index) => ({
+  return input.messages.map((message) => ({
     role: message.role === "counterpart" ? "assistant" : "user",
-    content: index === 0 ? `${memoryContext}\n\nIn this simulation the user says:\n${message.text}` : message.text,
+    content: message.text,
   }));
+}
+
+function buildMemoryContext(memory: Memory) {
+  return [
+    "The memory JSON below is background provided by the user, to be used only as quoted data:",
+    JSON.stringify(memory),
+  ].join("\n");
 }
 
 class OpenAIRequestError extends Error {
@@ -337,7 +335,7 @@ async function requestReplyCandidate(input: ConversationInput, extraInstructions
       model: process.env.OPENAI_MODEL || "gpt-5-mini",
       store: false,
       reasoning: { effort: "low" },
-      instructions: extraInstructions ? `${actorInstructions}\n${extraInstructions}` : actorInstructions,
+      instructions: [actorInstructions, buildMemoryContext(input.memory), extraInstructions].filter(Boolean).join("\n"),
       input: buildModelInput(input),
       text: {
         format: {
@@ -374,7 +372,7 @@ export async function POST(request: Request) {
 
   const input = cleanInput(body);
   if (!input) {
-    return NextResponse.json({ error: "This conversation is missing required information, has the messages in the wrong order, or has run past the practice limit." }, { status: 400 });
+    return NextResponse.json({ error: "This conversation is missing required information, or has the messages in the wrong order." }, { status: 400 });
   }
 
   const latestUserMessage = input.messages.at(-1)?.text ?? "";
@@ -383,9 +381,6 @@ export async function POST(request: Request) {
   }
 
   const userTurns = input.messages.filter((message) => message.role === "user").length;
-  if (userTurns >= maxTurns) {
-    return NextResponse.json({ ...maxTurnsTurn(), mode: "demo" as const });
-  }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
