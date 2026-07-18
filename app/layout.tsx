@@ -24,21 +24,21 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase,
     title: {
-      default: "第二次回答",
-      template: "%s · 第二次回答",
+      default: "Second Reply",
+      template: "%s · Second Reply",
     },
-    description: "重新回到一段对话，找到这一次真正想说的话。",
+    description: "Go back into a conversation and find what you really want to say this time.",
     openGraph: {
       type: "website",
-      locale: "zh_CN",
-      title: "第二次回答",
-      description: "如果可以回到那段对话里。",
-      images: [{ url: "/og.png", width: 1536, height: 1024, alt: "第二次回答" }],
+      locale: "en_US",
+      title: "Second Reply",
+      description: "If you could go back into that conversation.",
+      images: [{ url: "/og.png", width: 1536, height: 1024, alt: "Second Reply" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "第二次回答",
-      description: "如果可以回到那段对话里。",
+      title: "Second Reply",
+      description: "If you could go back into that conversation.",
       images: ["/og.png"],
     },
   };
@@ -46,7 +46,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="en">
       <body className={`${sans.variable} ${serif.variable}`}>{children}</body>
     </html>
   );

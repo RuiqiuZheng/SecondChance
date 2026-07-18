@@ -2,23 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const memory = {
-  relationship: "一位旧朋友",
-  context: "我们因为一次失约争吵。",
-  counterpartWords: "对方说我根本不在乎。",
+  relationship: "An old friend",
+  context: "We argued after a missed plan.",
+  counterpartWords: "They said I simply don't care.",
   isApproximate: true,
-  counterpartStyle: "句子很短，生气时会直接反问。",
-  counterpartPhrases: "算了",
-  sampleProfile: "偏好短句；冲突时会先直接反问，拒绝时通常很明确。",
-  counterpartEmotion: "生气",
-  counterpartOpenness: "愿意听但会反驳",
-  counterpartReaction: "马上反驳",
-  originalReply: "我当时没有解释。",
-  feelings: "我怕越说越糟。",
-  coreIntent: "我并不是不在乎。",
-  desiredOutcome: "把误会说开。",
-  boundary: "不能互相羞辱。",
-  tone: "温和真诚",
-  length: "适中",
+  counterpartStyle: "Very short sentences; asks pointed questions directly when angry.",
+  counterpartPhrases: "forget it",
+  sampleProfile: "Prefers short sentences; pushes back directly first in conflict, and is usually clear when refusing.",
+  counterpartEmotion: "Angry",
+  counterpartOpenness: "Will listen but push back",
+  counterpartReaction: "Pushes back immediately",
+  originalReply: "I didn't explain at the time.",
+  feelings: "I was afraid it would only get worse the more I said.",
+  coreIntent: "It's not that I don't care.",
+  desiredOutcome: "Clear up the misunderstanding.",
+  boundary: "No shaming each other.",
+  tone: "Warm & sincere",
+  length: "Medium",
 };
 
 async function loadWorker(suffix) {
@@ -70,11 +70,11 @@ test("server-renders the second reply questionnaire", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>第二次回答<\/title>/i);
-  assert.match(html, /如果可以回到/);
-  assert.match(html, /回到那一刻/);
-  assert.match(html, /11 个问题/);
-  assert.match(html, /本次内容不会保存在浏览器/);
+  assert.match(html, /<title>Second Reply<\/title>/i);
+  assert.match(html, /If you could go back/);
+  assert.match(html, /Go back to that moment/);
+  assert.match(html, /11 questions/);
+  assert.match(html, /This session is not saved in your browser/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
@@ -89,12 +89,12 @@ test("generate extracts a compact profile from an optional chat sample", async (
       capturedBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
         output_text: JSON.stringify({
-          primaryReply: "我想把那天的误会说清楚。",
-          gentleReply: "如果你愿意，我想重新说说那天的事。",
-          firmReply: "我愿意解释，但不能接受互相羞辱。",
-          reflection: "你想让表达更接近真实的自己。",
-          assumptions: ["对方的话是记忆中的大意"],
-          sampleProfile: "常用短句，通常先直接回应；不确定时会暂缓决定，拒绝时表达明确。",
+          primaryReply: "I want to clear up the misunderstanding from that day.",
+          gentleReply: "If you're willing, I'd like to talk through that day again.",
+          firmReply: "I'm willing to explain, but I can't accept us shaming each other.",
+          reflection: "You want your words to land closer to who you really are.",
+          assumptions: ["What the other person said is the gist as you remember it"],
+          sampleProfile: "Often uses short sentences and usually responds directly; when unsure, defers the decision, and is clear when refusing.",
         }),
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -104,15 +104,15 @@ test("generate extracts a compact profile from an optional chat sample", async (
   try {
     const response = await requestGenerate(worker, {
       ...memory,
-      conversationSamples: "我：周六有空吗？\n小林：还不知道，晚点定。\n我：那下午呢？\n小林：不行，我有安排。",
-      sampleCounterpartName: "小林",
+      conversationSamples: "Me: Are you free Saturday?\nLin: Not sure yet, I'll decide later.\nMe: How about the afternoon?\nLin: Can't, I have plans.",
+      sampleCounterpartName: "Lin",
     });
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.mode, "ai");
-    assert.match(payload.sampleProfile, /短句|拒绝/);
-    assert.match(capturedBody.input, /周六有空吗/);
-    assert.match(capturedBody.instructions, /只分析对方的发言/);
+    assert.match(payload.sampleProfile, /short sentence|refus/i);
+    assert.match(capturedBody.input, /free Saturday/);
+    assert.match(capturedBody.instructions, /analyze only the other person's messages/);
     assert.equal(capturedBody.text.format.schema.properties.sampleProfile.maxLength, 1200);
     assert.equal(capturedBody.store, false);
   } finally {
@@ -125,7 +125,7 @@ test("generate extracts a compact profile from an optional chat sample", async (
 test("conversation fallback uses the remembered personality instead of one generic reply", async () => {
   const worker = await loadWorker("conversation");
   const response = await requestConversation(worker, [
-    { role: "user", text: "我当时不是不在乎，只是不知道怎么说。" },
+    { role: "user", text: "I wasn't uncaring back then, I just didn't know how to say it." },
   ]);
 
   assert.equal(response.status, 200);
@@ -135,17 +135,17 @@ test("conversation fallback uses the remembered personality instead of one gener
   assert.equal(payload.endReason, "none");
   assert.equal(payload.goalState, "progressing");
   assert.ok(payload.turnAction);
-  assert.match(payload.reply, /根本不是这么说的|哪句才是真的/);
+  assert.match(payload.reply, /what you said back then|which version is true/);
 });
 
 test("conversation fallback can reach the desired outcome", async () => {
   const worker = await loadWorker("conversation-success");
   const messages = [
-    { role: "user", text: "我想解释那天的事。" },
-    { role: "counterpart", text: "你先说。" },
-    { role: "user", text: "我当时很害怕。" },
-    { role: "counterpart", text: "我知道了。" },
-    { role: "user", text: "那我们明天把这次误会具体说开，可以吗？" },
+    { role: "user", text: "I want to explain what happened that day." },
+    { role: "counterpart", text: "You go first." },
+    { role: "user", text: "I was really scared at the time." },
+    { role: "counterpart", text: "I see." },
+    { role: "user", text: "Then can we sit down tomorrow and talk through this misunderstanding specifically?" },
   ];
   const response = await requestConversation(worker, messages);
 
@@ -160,10 +160,10 @@ test("conversation fallback can reach the desired outcome", async () => {
 test("conversation fallback records an early breakdown as a bad ending", async () => {
   const worker = await loadWorker("conversation-breakdown");
   const response = await requestConversation(worker, [
-    { role: "user", text: "我想解释那天的事。" },
-    { role: "counterpart", text: "我没什么想说的。" },
-    { role: "user", text: "至少让我把最重要的部分说完。" },
-  ], { ...memory, counterpartOpenness: "不想继续" });
+    { role: "user", text: "I want to explain what happened that day." },
+    { role: "counterpart", text: "I have nothing I want to say." },
+    { role: "user", text: "At least let me finish the most important part." },
+  ], { ...memory, counterpartOpenness: "Doesn't want to continue" });
 
   assert.equal(response.status, 200);
   const payload = await response.json();
@@ -177,8 +177,8 @@ test("conversation fallback records the twelfth turn as the limit ending", async
   const worker = await loadWorker("conversation-max-turns");
   const messages = [];
   for (let turn = 1; turn <= 12; turn += 1) {
-    messages.push({ role: "user", text: `这是我的第 ${turn} 次解释，我还在说明当时的想法。` });
-    if (turn < 12) messages.push({ role: "counterpart", text: `我听见了第 ${turn} 次解释，但还没有答应。` });
+    messages.push({ role: "user", text: `This is my explanation number ${turn}, and I'm still describing what I was thinking.` });
+    if (turn < 12) messages.push({ role: "counterpart", text: `I heard explanation number ${turn}, but I haven't agreed yet.` });
   }
   const response = await requestConversation(worker, messages);
 
@@ -202,7 +202,7 @@ test("AI conversation requests preserve alternating user and assistant roles", a
       capturedBodies.push(body);
       const output = capturedBodies.length === 1
         ? {
-            reply: "我听明白了一部分，但我不想再继续这段对话了。",
+            reply: "I hear part of it, but I don't want to keep this conversation going.",
             turnAction: "close",
           }
         : {
@@ -213,8 +213,8 @@ test("AI conversation requests preserve alternating user and assistant roles", a
             counterpartDecision: "declined",
             candidateVerdict: "use",
             requiredAction: "keep",
-            rewriteInstruction: "无需重写。",
-            evidence: "候选明确结束了对话，期待结果尚未达成。",
+            rewriteInstruction: "",
+            evidence: "The candidate clearly ended the conversation, and the hoped-for outcome wasn't reached.",
           };
       return new Response(JSON.stringify({
         output_text: JSON.stringify(output),
@@ -225,9 +225,9 @@ test("AI conversation requests preserve alternating user and assistant roles", a
 
   try {
     const response = await requestConversation(worker, [
-      { role: "user", text: "我想解释那天的事。" },
-      { role: "counterpart", text: "那你说吧。" },
-      { role: "user", text: "我当时离开是因为太害怕了。" },
+      { role: "user", text: "I want to explain what happened that day." },
+      { role: "counterpart", text: "Go ahead then." },
+      { role: "user", text: "I left back then because I was too scared." },
     ]);
     assert.equal(response.status, 200);
     const payload = await response.json();
@@ -239,7 +239,7 @@ test("AI conversation requests preserve alternating user and assistant roles", a
     assert.match(capturedBodies[0].input[0].content, /memory JSON/);
     assert.equal(capturedBodies[0].reasoning.effort, "low");
     assert.equal(capturedBodies[1].reasoning.effort, "medium");
-    assert.match(capturedBodies[1].instructions, /独立语义裁判/);
+    assert.match(capturedBodies[1].instructions, /independent semantic judge/);
     assert.match(capturedBodies[1].instructions, /desiredOutcome/);
     assert.deepEqual(capturedBodies[1].text.format.schema.properties.progress.enum, ["forward", "stalled", "question_loop"]);
     assert.equal(capturedBodies[0].store, false);
@@ -262,7 +262,7 @@ test("repetitive AI replies are regenerated once", async () => {
       requestCount += 1;
       const turn = requestCount === 1
         ? {
-            reply: "我还是不知道该不该相信你说的这些。",
+            reply: "I still don't know whether I should believe what you're saying.",
             turnAction: "respond",
           }
         : requestCount === 2
@@ -274,11 +274,11 @@ test("repetitive AI replies are regenerated once", async () => {
               counterpartDecision: "undecided",
               candidateVerdict: "regenerate",
               requiredAction: "close",
-              rewriteInstruction: "候选与前文重复，已经没有新的推进空间，请自然结束。",
-              evidence: "候选重复了上一轮立场，没有产生新进展。",
+              rewriteInstruction: "The candidate repeats the previous line with no new room to move; end naturally.",
+              evidence: "The candidate repeated last turn's stance and produced no new progress.",
             }
           : {
-            reply: "我听见你的解释了，但我不想再继续说了。就到这里吧。",
+            reply: "I hear your explanation, but I don't want to keep talking. Let's leave it here.",
             turnAction: "close",
           };
       return new Response(JSON.stringify({ output_text: JSON.stringify(turn) }), {
@@ -291,9 +291,9 @@ test("repetitive AI replies are regenerated once", async () => {
 
   try {
     const response = await requestConversation(worker, [
-      { role: "user", text: "我希望你能相信我。" },
-      { role: "counterpart", text: "我还是不知道该不该相信你说的这些。" },
-      { role: "user", text: "我可以告诉你当时具体发生了什么。" },
+      { role: "user", text: "I hope you can believe me." },
+      { role: "counterpart", text: "I still don't know whether I should believe what you're saying." },
+      { role: "user", text: "I can tell you exactly what happened at the time." },
     ]);
     assert.equal(response.status, 200);
     const payload = await response.json();
@@ -301,7 +301,7 @@ test("repetitive AI replies are regenerated once", async () => {
     assert.equal(payload.mode, "ai");
     assert.equal(payload.status, "ended");
     assert.equal(payload.endReason, "breakdown");
-    assert.match(payload.reply, /不想再继续|到这里/);
+    assert.match(payload.reply, /don't want to keep|leave it here/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -321,7 +321,7 @@ test("the semantic judge rewrites a question loop into a clear successful decisi
       requestCount += 1;
       capturedBodies.push(JSON.parse(String(init?.body)));
       const output = requestCount === 1
-        ? { reply: "那你打算怎么过去？", turnAction: "ask" }
+        ? { reply: "So how are you planning to get there?", turnAction: "ask" }
         : requestCount === 2
           ? {
               candidateOutcome: "continue",
@@ -331,10 +331,10 @@ test("the semantic judge rewrites a question loop into a clear successful decisi
               counterpartDecision: "undecided",
               candidateVerdict: "regenerate",
               requiredAction: "accept",
-              rewriteInstruction: "用户已经回答了必要信息，直接决定是否接受邀请。",
-              evidence: "最近两次必要信息已经补全，候选仍换题追问。",
+              rewriteInstruction: "The user already gave the necessary details; decide whether to accept the invitation.",
+              evidence: "The necessary details were completed in the last two turns, but the candidate keeps changing the question.",
             }
-          : { reply: "可以，周六下午三点电影院见。", turnAction: "accept" };
+          : { reply: "Sure, Saturday at 3pm at the downtown cinema.", turnAction: "accept" };
       return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -346,18 +346,18 @@ test("the semantic judge rewrites a question loop into a clear successful decisi
   try {
     const inviteMemory = {
       ...memory,
-      context: "我想约对方周末出去。",
-      counterpartWords: "对方之前说最近想看一部电影。",
-      counterpartEmotion: "平静",
-      counterpartReaction: "追问细节",
-      desiredOutcome: "对方答应周六和我一起看电影。",
+      context: "I want to invite them out this weekend.",
+      counterpartWords: "They mentioned wanting to see a movie recently.",
+      counterpartEmotion: "Calm",
+      counterpartReaction: "Presses for details",
+      desiredOutcome: "They agree to see a movie with me on Saturday.",
     };
     const response = await requestConversation(worker, [
-      { role: "user", text: "周六一起看电影吗？" },
-      { role: "counterpart", text: "看什么电影？" },
-      { role: "user", text: "你之前说想看的那部。" },
-      { role: "counterpart", text: "在哪里？" },
-      { role: "user", text: "市中心电影院，下午三点，可以吗？" },
+      { role: "user", text: "Want to watch a movie together Saturday?" },
+      { role: "counterpart", text: "What movie?" },
+      { role: "user", text: "The one you said you wanted to see." },
+      { role: "counterpart", text: "Where?" },
+      { role: "user", text: "The downtown cinema, 3pm, does that work?" },
     ], inviteMemory);
     assert.equal(response.status, 200);
     const payload = await response.json();
@@ -366,8 +366,8 @@ test("the semantic judge rewrites a question loop into a clear successful decisi
     assert.equal(payload.status, "ended");
     assert.equal(payload.endReason, "resolved");
     assert.equal(payload.goalState, "achieved");
-    assert.match(payload.reply, /可以|周六下午三点/);
-    assert.match(capturedBodies[2].instructions, /必须完成的动作：accept/);
+    assert.match(payload.reply, /sure|saturday/i);
+    assert.match(capturedBodies[2].instructions, /Required action: accept/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -385,7 +385,7 @@ test("the semantic judge respects the user's meaning when they end the conversat
     if (String(input) === "https://api.openai.com/v1/responses") {
       requestCount += 1;
       const output = requestCount === 1
-        ? { reply: "你为什么突然这么说？", turnAction: "ask" }
+        ? { reply: "Why are you suddenly saying this?", turnAction: "ask" }
         : requestCount === 2
           ? {
               candidateOutcome: "continue",
@@ -395,10 +395,10 @@ test("the semantic judge respects the user's meaning when they end the conversat
               counterpartDecision: "undecided",
               candidateVerdict: "regenerate",
               requiredAction: "close",
-              rewriteInstruction: "用户明确要求终止交流，只自然收尾。",
-              evidence: "最新发言的完整语义是在驱赶对方并结束对话。",
+              rewriteInstruction: "The user clearly asked to stop; just close naturally.",
+              evidence: "The full meaning of the latest message is driving the other person away and ending the conversation.",
             }
-          : { reply: "好，那就到这里。", turnAction: "close" };
+          : { reply: "Okay, let's leave it here then.", turnAction: "close" };
       return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -409,7 +409,7 @@ test("the semantic judge respects the user's meaning when they end the conversat
 
   try {
     const response = await requestConversation(worker, [
-      { role: "user", text: "滚，我不想再和你说了。" },
+      { role: "user", text: "Get lost, I don't want to talk to you anymore." },
     ]);
     assert.equal(response.status, 200);
     const payload = await response.json();
@@ -417,7 +417,7 @@ test("the semantic judge respects the user's meaning when they end the conversat
     assert.equal(payload.mode, "ai");
     assert.equal(payload.status, "ended");
     assert.equal(payload.endReason, "breakdown");
-    assert.match(payload.reply, /到这里/);
+    assert.match(payload.reply, /leave it here/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -435,7 +435,7 @@ test("the AI path closes an unresolved twelfth turn as the limit ending", async 
     if (String(input) === "https://api.openai.com/v1/responses") {
       requestCount += 1;
       const output = requestCount === 1
-        ? { reply: "那你还想怎么解释？", turnAction: "ask" }
+        ? { reply: "So how else do you want to explain it?", turnAction: "ask" }
         : requestCount === 2
           ? {
               candidateOutcome: "continue",
@@ -445,10 +445,10 @@ test("the AI path closes an unresolved twelfth turn as the limit ending", async 
               counterpartDecision: "undecided",
               candidateVerdict: "use",
               requiredAction: "keep",
-              rewriteInstruction: "无需重写。",
-              evidence: "候选仍在尝试继续澄清，但目的尚未达成。",
+              rewriteInstruction: "No rewrite needed.",
+              evidence: "The candidate is still trying to keep clarifying, but the goal isn't reached yet.",
             }
-          : { reply: "我们还是没有说到一起，今天就到这里吧。", turnAction: "close" };
+          : { reply: "We still haven't met on this, so let's leave it here for today.", turnAction: "close" };
       return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -460,8 +460,8 @@ test("the AI path closes an unresolved twelfth turn as the limit ending", async 
   try {
     const messages = [];
     for (let turn = 1; turn <= 12; turn += 1) {
-      messages.push({ role: "user", text: `这是第 ${turn} 轮，我还想继续解释。` });
-      if (turn < 12) messages.push({ role: "counterpart", text: `我听见了第 ${turn} 轮，但还没有答应。` });
+      messages.push({ role: "user", text: `This is turn ${turn}, and I still want to keep explaining.` });
+      if (turn < 12) messages.push({ role: "counterpart", text: `I heard turn ${turn}, but I haven't agreed yet.` });
     }
     const response = await requestConversation(worker, messages);
     assert.equal(response.status, 200);
