@@ -5,8 +5,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 type Tone = "Warm & sincere" | "Direct & candid" | "Firm with boundaries" | "Calm & measured";
 type ReplyLength = "Short" | "Medium" | "Detailed";
 type ConversationStatus = "continue" | "ended";
-type EndReason = "none" | "resolved" | "breakdown" | "max_turns" | "safety";
-type GoalState = "progressing" | "achieved" | "blocked";
+type EndReason = "none" | "safety";
 type TurnAction = "respond" | "ask" | "clarify" | "challenge" | "soften" | "set_boundary" | "accept" | "decline" | "offer_alternative" | "close" | "end";
 type CounterpartEmotion = "Unsure" | "Calm" | "Angry" | "Sad" | "Guarded" | "Cold" | "Hesitant";
 type CounterpartOpenness = "Unsure" | "Wants to clear things up" | "Will listen but push back" | "Hesitant and watchful" | "Tends to avoid" | "Doesn't want to continue";
@@ -34,11 +33,7 @@ type MemoryForm = {
 };
 
 type StarterResult = {
-  primaryReply: string;
-  gentleReply: string;
-  firmReply: string;
-  reflection: string;
-  assumptions: string[];
+  openingLine: string;
   sampleProfile: string;
   mode: "ai" | "demo";
   notice?: string;
@@ -54,8 +49,6 @@ type ConversationResponse = {
   reply: string;
   status: ConversationStatus;
   endReason: EndReason;
-  goalState: GoalState;
-  goalEvidence: string;
   turnAction: TurnAction;
   mode: "ai" | "demo";
   notice?: string;
@@ -141,6 +134,13 @@ function messageId(role: ChatMessage["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// This is a replay of the original moment, not a fresh conversation — it
+// opens with the other person's own line, not a blank slate.
+function openingMessages(openingLine: string): ChatMessage[] {
+  const trimmed = openingLine.trim();
+  return trimmed ? [{ id: messageId("counterpart"), role: "counterpart", text: trimmed }] : [];
+}
+
 function buildConversationMemory(form: MemoryForm, sampleProfile: string) {
   return {
     relationship: form.relationship,
@@ -173,7 +173,6 @@ export function SecondReplyApp() {
   const [draft, setDraft] = useState("");
   const [chatMode, setChatMode] = useState<"ai" | "demo" | null>(null);
   const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("continue");
-  const [endReason, setEndReason] = useState<EndReason>("none");
   const [chatNotice, setChatNotice] = useState("");
   const [sampleFileName, setSampleFileName] = useState("");
   const [sampleImportNotice, setSampleImportNotice] = useState("");
@@ -215,13 +214,13 @@ export function SecondReplyApp() {
       case 0:
         return form.relationship.trim().length > 0;
       case 1:
-        return form.context.trim().length > 0;
-      case 2:
-        return form.counterpartWords.trim().length > 0;
-      case 3:
-        return form.counterpartStyle.trim().length > 0;
-      case 4:
         return true;
+      case 2:
+        return form.context.trim().length > 0;
+      case 3:
+        return form.counterpartWords.trim().length > 0;
+      case 4:
+        return form.counterpartStyle.trim().length > 0;
       case 5:
         return true;
       case 6:
@@ -300,29 +299,80 @@ export function SecondReplyApp() {
     setSampleImportNotice("Removed the chat reference sample.");
   }
 
-  async function beginConversation() {
+  async function beginConversation(overrideForm?: MemoryForm) {
+    const activeForm = overrideForm ?? form;
     setLoading(true);
     setError("");
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(activeForm),
       });
       const payload = (await response.json()) as StarterResult & { error?: string };
       if (!response.ok) {
         throw new Error(payload.error || "Couldn't prepare this conversation right now. Please try again later.");
       }
       setStarter(payload);
-      setMessages([]);
+      const opening = openingMessages(payload.openingLine);
+      setMessages(opening);
+      if (opening[0]) prefetchVoice(opening[0].id, opening[0].text);
       setDraft("");
       setChatMode(null);
       setConversationStatus("continue");
-      setEndReason("none");
       setChatNotice("");
       setView("chat");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't prepare this conversation right now. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Fast path from the chat-log screen: analyze the log for context/style if
+  // one was given, fall back to a generic context otherwise, then jump
+  // straight into the conversation without the rest of the questionnaire.
+  async function quickStart() {
+    setLoading(true);
+    setError("");
+    try {
+      let nextContext = form.context;
+      let nextStyle = form.counterpartStyle;
+      let nextPhrases = form.counterpartPhrases;
+
+      if (form.conversationSamples.trim()) {
+        try {
+          const response = await fetch("/api/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversationSamples: form.conversationSamples,
+              sampleCounterpartName: form.sampleCounterpartName,
+            }),
+          });
+          const payload = await response.json();
+          if (response.ok) {
+            if (payload.context) nextContext = payload.context;
+            if (payload.counterpartStyle) nextStyle = payload.counterpartStyle;
+            if (payload.counterpartPhrases) nextPhrases = payload.counterpartPhrases;
+          }
+        } catch {
+          // Analysis is a best-effort convenience; fall through to the generic fallback below.
+        }
+      }
+
+      if (!nextContext.trim()) {
+        nextContext = `A conversation with ${form.relationship || "them"} that was left unresolved.`;
+      }
+      if (!nextStyle.trim()) {
+        nextStyle = "Unsure — no details given yet.";
+      }
+
+      const quickForm: MemoryForm = { ...form, context: nextContext, counterpartStyle: nextStyle, counterpartPhrases: nextPhrases };
+      setForm(quickForm);
+      await beginConversation(quickForm);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn't start the conversation right now.");
     } finally {
       setLoading(false);
     }
@@ -361,7 +411,6 @@ export function SecondReplyApp() {
       prefetchVoice(counterpartId, payload.reply);
       setChatMode(payload.mode);
       setConversationStatus(payload.status);
-      setEndReason(payload.endReason);
       setChatNotice(payload.notice ?? "");
       if (payload.status !== "continue") setDraft("");
     } catch (caught) {
@@ -453,11 +502,12 @@ export function SecondReplyApp() {
   }
 
   function restartConversation() {
-    setMessages([]);
+    const opening = starter ? openingMessages(starter.openingLine) : [];
+    setMessages(opening);
+    if (opening[0]) prefetchVoice(opening[0].id, opening[0].text);
     setDraft("");
     setChatMode(null);
     setConversationStatus("continue");
-    setEndReason("none");
     setChatNotice("");
     setError("");
   }
@@ -469,7 +519,6 @@ export function SecondReplyApp() {
     setDraft("");
     setChatMode(null);
     setConversationStatus("continue");
-    setEndReason("none");
     setChatNotice("");
     setSampleFileName("");
     setSampleImportNotice("");
@@ -498,22 +547,11 @@ export function SecondReplyApp() {
   }
 
   if (view === "chat" && starter) {
-    const starterChoices = [
-      { label: "Start from the core", text: starter.primaryReply },
-      { label: "A gentler version", text: starter.gentleReply },
-      { label: "State the boundary first", text: starter.firmReply },
-    ];
     const counterpartInitial = form.relationship.trim().charAt(0).toUpperCase() || "•";
     const isDemo = starter.mode === "demo" || chatMode === "demo";
     const modeNotice = chatNotice || starter.notice || (isDemo ? "This includes local simulation. Once a valid AI key is configured, AI replies are used first." : "");
     const statusLabel = conversationStatus === "continue" ? "Practicing" : "This conversation has ended";
-    const terminalCopy = endReason === "resolved"
-      ? { kind: "success", eyebrow: "SUCCESS ENDING", title: "The outcome you hoped for was reached.", body: "The other person's response met the key conditions of your goal for this conversation. This is only one simulated possibility, but this practice path has come to a complete close." }
-      : endReason === "breakdown"
-        ? { kind: "breakdown", eyebrow: "BAD ENDING · Broke down midway", title: "This conversation broke down partway through.", body: "The other person ended it, refused, or lost any room to move forward, and the outcome you hoped for wasn't reached. You can try again with a different opening." }
-        : endReason === "max_turns"
-          ? { kind: "max-turns", eyebrow: "BAD ENDING · Out of turns", title: "12 turns are up, and the goal wasn't reached.", body: "This path didn't reach the outcome you hoped for within the practice limit. You can practice again, or adjust the desired outcome and the other person's state and retry." }
-          : { kind: "safety", eyebrow: "SAFETY FIRST · Protect yourself", title: "This simulation has stopped.", body: "If there is an imminent danger in real life, please leave the situation and contact someone you trust or your local emergency services." };
+    const terminalCopy = { kind: "safety", eyebrow: "SAFETY FIRST · Protect yourself", title: "This simulation has stopped.", body: "If there is an imminent danger in real life, please leave the situation and contact someone you trust or your local emergency services." };
 
     return (
       <main className="app-shell chat-page">
@@ -544,69 +582,53 @@ export function SecondReplyApp() {
             </div>
 
             <div className="chat-scroll" aria-live="polite">
-              {messages.length === 0 ? (
-                <section className="conversation-opening">
-                  <p className="eyebrow">YOUR TURN</p>
-                  <h1>This time, what do you want to say first?</h1>
-                  <p>{starter.reflection} You can write it entirely yourself, or pick a draft first and edit it.</p>
-                  <div className="starter-choices">
-                    {starterChoices.map((choice) => (
-                      <button key={choice.label} onClick={() => setDraft(choice.text)}>
-                        <span>{choice.label}</span>
-                        <p>{choice.text}</p>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ) : (
-                <div className="message-list">
-                  <div className="scene-marker"><span>Back to that moment</span></div>
-                  {messages.map((message) => (
-                    <article className={`message-row ${message.role}`} key={message.id}>
-                      {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>}
-                      <div>
-                        <span className="message-author">{message.role === "user" ? "You" : form.relationship}</span>
-                        <p>{message.text}</p>
-                        {message.role === "counterpart" && (
-                          <button
-                            type="button"
-                            className={`voice-play-button${voiceCacheStatus[message.id] === "loading" ? " voice-pending" : ""}`}
-                            onClick={() => playMessage(message.id, message.text)}
-                            disabled={voiceLoadingId === message.id}
-                            aria-label={voicePlayingId === message.id ? "Stop playback" : "Play this reply"}
-                          >
-                            {voiceLoadingId === message.id
-                              ? "…"
-                              : voicePlayingId === message.id
-                                ? "■ Stop"
-                                : voiceCacheStatus[message.id] === "loading"
-                                  ? "◌ Voice ready shortly"
-                                  : "▶ Play"}
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                  {voiceError && <p className="error-message voice-error" role="alert">{voiceError}</p>}
-                  {loading && (
-                    <article className="message-row counterpart" aria-label="The other person is replying">
-                      <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>
-                      <div>
-                        <span className="message-author">{form.relationship}</span>
-                        <p className="typing-indicator"><i /><i /><i /></p>
-                      </div>
-                    </article>
-                  )}
-                  {conversationStatus !== "continue" && (
-                    <section className={`conversation-end-card ${terminalCopy.kind}`} role="status">
-                      <p className="eyebrow">{terminalCopy.eyebrow}</p>
-                      <h2>{terminalCopy.title}</h2>
-                      <p>{terminalCopy.body}</p>
-                      <small>The end of a simulation reflects only this one practice path, not how the real person would ultimately respond.</small>
-                    </section>
-                  )}
-                </div>
-              )}
+              <div className="message-list">
+                <div className="scene-marker"><span>Back to that moment</span></div>
+                {messages.map((message) => (
+                  <article className={`message-row ${message.role}`} key={message.id}>
+                    {message.role === "counterpart" && <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>}
+                    <div>
+                      <span className="message-author">{message.role === "user" ? "You" : form.relationship}</span>
+                      <p>{message.text}</p>
+                      {message.role === "counterpart" && (
+                        <button
+                          type="button"
+                          className={`voice-play-button${voiceCacheStatus[message.id] === "loading" ? " voice-pending" : ""}`}
+                          onClick={() => playMessage(message.id, message.text)}
+                          disabled={voiceLoadingId === message.id}
+                          aria-label={voicePlayingId === message.id ? "Stop playback" : "Play this reply"}
+                        >
+                          {voiceLoadingId === message.id
+                            ? "…"
+                            : voicePlayingId === message.id
+                              ? "■ Stop"
+                              : voiceCacheStatus[message.id] === "loading"
+                                ? "◌ Voice ready shortly"
+                                : "▶ Play"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+                {voiceError && <p className="error-message voice-error" role="alert">{voiceError}</p>}
+                {loading && (
+                  <article className="message-row counterpart" aria-label="The other person is replying">
+                    <span className="message-avatar" aria-hidden="true">{counterpartInitial}</span>
+                    <div>
+                      <span className="message-author">{form.relationship}</span>
+                      <p className="typing-indicator"><i /><i /><i /></p>
+                    </div>
+                  </article>
+                )}
+                {conversationStatus !== "continue" && (
+                  <section className={`conversation-end-card ${terminalCopy.kind}`} role="status">
+                    <p className="eyebrow">{terminalCopy.eyebrow}</p>
+                    <h2>{terminalCopy.title}</h2>
+                    <p>{terminalCopy.body}</p>
+                    <small>The end of a simulation reflects only this one practice path, not how the real person would ultimately respond.</small>
+                  </section>
+                )}
+              </div>
               <div ref={chatEndRef} />
             </div>
 
@@ -657,13 +679,13 @@ export function SecondReplyApp() {
               <div><dt>How they speak</dt><dd>{form.counterpartStyle}</dd></div>
               <div><dt>Their state at the time</dt><dd>{form.counterpartEmotion} · {form.counterpartOpenness}</dd></div>
               {form.conversationSamples && <div><dt>Chat reference sample</dt><dd>Imported {form.conversationSamples.length.toLocaleString()} characters</dd></div>}
-              <div><dt>What you want this time</dt><dd>{form.desiredOutcome}</dd></div>
+              {form.desiredOutcome && <div><dt>What you want this time</dt><dd>{form.desiredOutcome}</dd></div>}
               {form.boundary && <div><dt>Your boundary</dt><dd>{form.boundary}</dd></div>}
             </dl>
-            {starter.assumptions.length > 0 && (
+            {form.isApproximate && form.counterpartWords && (
               <p className="sidebar-note">What the other person said is treated as &ldquo;the gist as you remember it,&rdquo; not word-for-word quotes.</p>
             )}
-            <p className="turn-count">Practiced {messages.filter((message) => message.role === "user").length} / 12 turns</p>
+            <p className="turn-count">Practiced {messages.filter((message) => message.role === "user").length} turns</p>
           </aside>
         </section>
       </main>
@@ -696,20 +718,30 @@ export function SecondReplyApp() {
         </aside>
 
         <div className="question-card">
-          {renderQuestion(step, form, update, {
-            importConversationSample,
-            clearConversationSample,
-            sampleFileName,
-            sampleImportNotice,
-          })}
+          {
+            // quickStart only touches voiceCacheRef inside a click-triggered async
+            // chain (never synchronously during render); the rule can't see that
+            // through the renderQuestion -> onQuickStart indirection.
+            // eslint-disable-next-line react-hooks/refs
+            renderQuestion(step, form, update, {
+              importConversationSample,
+              clearConversationSample,
+              sampleFileName,
+              sampleImportNotice,
+              onQuickStart: quickStart,
+              quickStartLoading: loading,
+            })
+          }
           {error && <p className="error-message" role="alert">{error}</p>}
 
           <div className="question-actions">
             <button className="secondary-button" onClick={previousStep}>← Back</button>
             {step < totalSteps - 1 ? (
-              <button className="primary-button" onClick={nextStep} disabled={!canContinue}>Continue <span aria-hidden="true">→</span></button>
+              <button className="primary-button" onClick={nextStep} disabled={!canContinue}>
+                {step === 1 ? "Add more detail instead" : "Continue"} <span aria-hidden="true">→</span>
+              </button>
             ) : (
-              <button className="primary-button generate-button" onClick={beginConversation} disabled={loading}>
+              <button className="primary-button generate-button" onClick={() => beginConversation()} disabled={loading}>
                 {loading ? "Preparing this conversation…" : "Enter this conversation"}
               </button>
             )}
@@ -734,6 +766,8 @@ function renderQuestion(
     clearConversationSample: () => void;
     sampleFileName: string;
     sampleImportNotice: string;
+    onQuickStart: () => void;
+    quickStartLoading: boolean;
   },
 ) {
   switch (step) {
@@ -746,37 +780,10 @@ function renderQuestion(
       );
     case 1:
       return (
-        <QuestionFrame number="02" title="What happened in that moment?" hint="Write only what you're sure happened. You don't need to explain who was right or wrong.">
-          <label className="field-label" htmlFor="context">The situation</label>
-          <textarea id="context" className="large-textarea" autoFocus value={form.context} onChange={(event) => update("context", event.target.value)} placeholder="e.g. After work, we argued about whether to keep working together…" maxLength={1600} />
-        </QuestionFrame>
-      );
-    case 2:
-      return (
-        <QuestionFrame number="03" title="What did they say at the time?" hint="It's fine if you don't remember the exact words — the gist is enough.">
-          <label className="field-label" htmlFor="counterpartWords">What you remember them saying</label>
-          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="e.g. They felt I wasn't taking this seriously…" maxLength={1600} />
-          <label className="check-row">
-            <input type="checkbox" checked={form.isApproximate} onChange={(event) => update("isApproximate", event.target.checked)} />
-            <span>This is the gist, not necessarily their exact words</span>
-          </label>
-        </QuestionFrame>
-      );
-    case 3:
-      return (
-        <QuestionFrame number="04" title="How does the other person usually speak?" hint="Describe how they actually express themselves, not how you wish they'd respond. If you can't recall, write &ldquo;Unsure.&rdquo;">
-          <label className="field-label" htmlFor="counterpartStyle">How they speak</label>
-          <textarea id="counterpartStyle" className="large-textarea" autoFocus value={form.counterpartStyle} onChange={(event) => update("counterpartStyle", event.target.value)} placeholder="e.g. Few words, short sentences; dislikes naming feelings directly; asks pointed questions when angry, sometimes just replies 'fine.'" maxLength={1400} />
-          <label className="field-label second-label" htmlFor="counterpartPhrases">Words or catchphrases they often use (optional)</label>
-          <textarea id="counterpartPhrases" className="medium-textarea" value={form.counterpartPhrases} onChange={(event) => update("counterpartPhrases", event.target.value)} placeholder="e.g. They often say 'forget it,' 'you go first,' 'I don't know'…" maxLength={800} />
-        </QuestionFrame>
-      );
-    case 4:
-      return (
-        <QuestionFrame number="05" title="Import a chat reference sample (optional)" hint="Paste a chat log or import a text file, and the AI will distill the other person's ways of expressing and reacting when you enter practice. No sample? Just continue.">
+        <QuestionFrame number="02" title="Got a chat log? Drop it in." hint="The AI will read it for how they talk and what happened, so you can skip straight to the conversation. No log? You can still describe things yourself.">
           <label className="field-label" htmlFor="sampleCounterpartName">The other person&rsquo;s display name in the chat log (optional)</label>
           <input id="sampleCounterpartName" className="large-input compact-input" value={form.sampleCounterpartName} onChange={(event) => update("sampleCounterpartName", event.target.value)} placeholder="e.g. Lin; used to tell the two sides apart" maxLength={120} />
-          <label className="field-label second-label" htmlFor="conversationSamples">Chat log</label>
+          <label className="field-label second-label" htmlFor="conversationSamples">Chat log (optional)</label>
           <textarea id="conversationSamples" className="large-textarea sample-textarea" value={form.conversationSamples} onChange={(event) => update("conversationSamples", event.target.value.slice(0, maxSampleCharacters))} placeholder={"e.g.\nMe: Are you free Saturday?\nLin: Might have to work, I'll let you know later."} maxLength={maxSampleCharacters} />
           <div className="sample-import-row">
             <label className="file-picker" htmlFor="conversationSampleFile">Import a text file</label>
@@ -788,6 +795,39 @@ function renderQuestion(
             <p className="sample-status" role="status">{sampleControls.sampleImportNotice || `Imported ${sampleControls.sampleFileName}`}</p>
           )}
           <p className="sample-privacy-note">Please remove real names, phone numbers, addresses, account numbers, ID documents, and any other unnecessary private details first. The raw sample is not written to any database, and is not re-sent with every turn.</p>
+          <div className="quickstart-row">
+            <button type="button" className="primary-button generate-button" onClick={sampleControls.onQuickStart} disabled={sampleControls.quickStartLoading}>
+              {sampleControls.quickStartLoading ? "Reading the log…" : "Skip ahead — start the conversation"} <span aria-hidden="true">→</span>
+            </button>
+            <p className="microcopy">Or keep going below to describe things in your own words instead.</p>
+          </div>
+        </QuestionFrame>
+      );
+    case 2:
+      return (
+        <QuestionFrame number="03" title="What happened in that moment?" hint="Write only what you're sure happened. You don't need to explain who was right or wrong.">
+          <label className="field-label" htmlFor="context">The situation</label>
+          <textarea id="context" className="large-textarea" autoFocus value={form.context} onChange={(event) => update("context", event.target.value)} placeholder="e.g. After work, we argued about whether to keep working together…" maxLength={1600} />
+        </QuestionFrame>
+      );
+    case 3:
+      return (
+        <QuestionFrame number="04" title="What did they say at the time?" hint="It's fine if you don't remember the exact words — the gist is enough.">
+          <label className="field-label" htmlFor="counterpartWords">What you remember them saying</label>
+          <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="e.g. They felt I wasn't taking this seriously…" maxLength={1600} />
+          <label className="check-row">
+            <input type="checkbox" checked={form.isApproximate} onChange={(event) => update("isApproximate", event.target.checked)} />
+            <span>This is the gist, not necessarily their exact words</span>
+          </label>
+        </QuestionFrame>
+      );
+    case 4:
+      return (
+        <QuestionFrame number="05" title="How does the other person usually speak?" hint="Describe how they actually express themselves, not how you wish they'd respond. If you can't recall, write &ldquo;Unsure.&rdquo;">
+          <label className="field-label" htmlFor="counterpartStyle">How they speak</label>
+          <textarea id="counterpartStyle" className="large-textarea" autoFocus value={form.counterpartStyle} onChange={(event) => update("counterpartStyle", event.target.value)} placeholder="e.g. Few words, short sentences; dislikes naming feelings directly; asks pointed questions when angry, sometimes just replies 'fine.'" maxLength={1400} />
+          <label className="field-label second-label" htmlFor="counterpartPhrases">Words or catchphrases they often use (optional)</label>
+          <textarea id="counterpartPhrases" className="medium-textarea" value={form.counterpartPhrases} onChange={(event) => update("counterpartPhrases", event.target.value)} placeholder="e.g. They often say 'forget it,' 'you go first,' 'I don't know'…" maxLength={800} />
         </QuestionFrame>
       );
     case 5:
