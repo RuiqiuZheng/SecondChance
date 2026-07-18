@@ -1549,9 +1549,14 @@ a:focus-visible {
   transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
-.reveal-button > span:not(.reveal-arrow) {
+#intro-continue {
+  width: 170px;
+  min-width: 150px;
+}
+
+#intro-continue > span:not(.reveal-arrow) {
   position: absolute;
-  left: 50%;
+  left: calc(50% - 1.5rem);
   transform: translateX(-50%);
 }
 

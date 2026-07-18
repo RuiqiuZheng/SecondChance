@@ -536,7 +536,7 @@ export function SecondReplyApp() {
           <p className="reveal-kicker">THE NEXT WORD IS YOURS</p>
           <h1 className="reveal-headline"><span className="reveal-now">NOW</span><span className="reveal-rest"> you can have<br />a second chance.</span></h1>
           <p className="reveal-copy">Return to the moment, and find the words you want to say.</p>
-          <button className="reveal-button" onClick={() => setView("questions")}>
+          <button id="intro-continue" className="reveal-button" onClick={() => setView("questions")}>
             <span>Continue</span> <span className="reveal-arrow" aria-hidden="true">→</span>
           </button>
         </div>
