@@ -73,7 +73,7 @@ test("server-renders the second reply questionnaire", async () => {
   assert.match(html, /<title>Second Reply<\/title>/i);
   assert.match(html, /If you could go back/);
   assert.match(html, /Go back to that moment/);
-  assert.match(html, /11 questions/);
+  assert.match(html, /12 questions/);
   assert.match(html, /This session is not saved in your browser/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });

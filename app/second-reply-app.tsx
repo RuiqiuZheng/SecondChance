@@ -126,9 +126,20 @@ const regretLines = [
   "Maybe this time",
   "What could still be saved",
 ];
-const totalSteps = 11;
+const totalSteps = 12;
 const maxSampleFileBytes = 200 * 1024;
 const maxSampleCharacters = 16_000;
+
+type VoiceUpload = {
+  name: string;
+  size: number;
+};
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function messageId(role: ChatMessage["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -174,6 +185,7 @@ export function SecondReplyApp() {
   const [chatMode, setChatMode] = useState<"ai" | "demo" | null>(null);
   const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("continue");
   const [chatNotice, setChatNotice] = useState("");
+  const [voiceUpload, setVoiceUpload] = useState<VoiceUpload | null>(null);
   const [sampleFileName, setSampleFileName] = useState("");
   const [sampleImportNotice, setSampleImportNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -216,20 +228,22 @@ export function SecondReplyApp() {
       case 1:
         return true;
       case 2:
-        return form.context.trim().length > 0;
-      case 3:
-        return form.counterpartWords.trim().length > 0;
-      case 4:
-        return form.counterpartStyle.trim().length > 0;
-      case 5:
         return true;
+      case 3:
+        return form.context.trim().length > 0;
+      case 4:
+        return form.counterpartWords.trim().length > 0;
+      case 5:
+        return form.counterpartStyle.trim().length > 0;
       case 6:
         return true;
       case 7:
-        return form.feelings.trim().length > 0;
+        return true;
       case 8:
-        return form.coreIntent.trim().length > 0;
+        return form.feelings.trim().length > 0;
       case 9:
+        return form.coreIntent.trim().length > 0;
+      case 10:
         return form.desiredOutcome.trim().length > 0;
       default:
         return true;
@@ -257,6 +271,19 @@ export function SecondReplyApp() {
       return;
     }
     setStep((current) => current - 1);
+  }
+
+  function selectVoiceUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setVoiceUpload({ name: file.name, size: file.size });
+    setError("");
+    event.target.value = "";
+  }
+
+  function clearVoiceUpload() {
+    setVoiceUpload(null);
   }
 
   async function importConversationSample(event: ChangeEvent<HTMLInputElement>) {
@@ -520,6 +547,7 @@ export function SecondReplyApp() {
     setChatMode(null);
     setConversationStatus("continue");
     setChatNotice("");
+    setVoiceUpload(null);
     setSampleFileName("");
     setSampleImportNotice("");
     setStep(0);
@@ -724,6 +752,9 @@ export function SecondReplyApp() {
             // through the renderQuestion -> onQuickStart indirection.
             // eslint-disable-next-line react-hooks/refs
             renderQuestion(step, form, update, {
+              selectVoiceUpload,
+              clearVoiceUpload,
+              voiceUpload,
               importConversationSample,
               clearConversationSample,
               sampleFileName,
@@ -738,7 +769,7 @@ export function SecondReplyApp() {
             <button className="secondary-button" onClick={previousStep}>← Back</button>
             {step < totalSteps - 1 ? (
               <button className="primary-button" onClick={nextStep} disabled={!canContinue}>
-                {step === 1 ? "Add more detail instead" : "Continue"} <span aria-hidden="true">→</span>
+                {step === 2 ? "Add more detail instead" : "Continue"} <span aria-hidden="true">→</span>
               </button>
             ) : (
               <button className="primary-button generate-button" onClick={() => beginConversation()} disabled={loading}>
@@ -762,6 +793,9 @@ function renderQuestion(
   form: MemoryForm,
   update: <K extends keyof MemoryForm>(key: K, value: MemoryForm[K]) => void,
   sampleControls: {
+    selectVoiceUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+    clearVoiceUpload: () => void;
+    voiceUpload: VoiceUpload | null;
     importConversationSample: (event: ChangeEvent<HTMLInputElement>) => void;
     clearConversationSample: () => void;
     sampleFileName: string;
@@ -780,7 +814,43 @@ function renderQuestion(
       );
     case 1:
       return (
-        <QuestionFrame number="02" title="Got a chat log? Drop it in." hint="The AI will read it for how they talk and what happened, so you can skip straight to the conversation. No log? You can still describe things yourself.">
+        <QuestionFrame number="02" title="Have a voice note from that moment?" hint="You can attach an audio recording before adding the chat. This step is optional.">
+          <div className={`voice-upload-card${sampleControls.voiceUpload ? " has-file" : ""}`}>
+            <span className="voice-upload-icon" aria-hidden="true">♪</span>
+            {sampleControls.voiceUpload ? (
+              <div className="voice-upload-ready">
+                <span className="voice-ready-label">VOICE NOTE READY</span>
+                <strong>{sampleControls.voiceUpload.name}</strong>
+                <span>{formatFileSize(sampleControls.voiceUpload.size)} · Audio attached</span>
+              </div>
+            ) : (
+              <div className="voice-upload-copy">
+                <strong>Upload a voice note</strong>
+                <span>Choose an audio file from your device</span>
+              </div>
+            )}
+            <label className="voice-file-picker" htmlFor="voiceSampleFile">
+              {sampleControls.voiceUpload ? "Replace audio" : "Choose audio"}
+            </label>
+            <input
+              id="voiceSampleFile"
+              className="visually-hidden"
+              type="file"
+              accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.webm"
+              onChange={sampleControls.selectVoiceUpload}
+            />
+          </div>
+          <div className="voice-upload-meta">
+            <span>MP3, M4A, WAV, AAC, OGG and other audio formats</span>
+            {sampleControls.voiceUpload && (
+              <button type="button" className="sample-clear" onClick={sampleControls.clearVoiceUpload}>Remove audio</button>
+            )}
+          </div>
+        </QuestionFrame>
+      );
+    case 2:
+      return (
+        <QuestionFrame number="03" title="Got a chat log? Drop it in." hint="The AI will read it for how they talk and what happened, so you can skip straight to the conversation. No log? You can still describe things yourself.">
           <label className="field-label" htmlFor="sampleCounterpartName">The other person&rsquo;s display name in the chat log (optional)</label>
           <input id="sampleCounterpartName" className="large-input compact-input" value={form.sampleCounterpartName} onChange={(event) => update("sampleCounterpartName", event.target.value)} placeholder="e.g. Lin; used to tell the two sides apart" maxLength={120} />
           <label className="field-label second-label" htmlFor="conversationSamples">Chat log (optional)</label>
@@ -803,16 +873,16 @@ function renderQuestion(
           </div>
         </QuestionFrame>
       );
-    case 2:
+    case 3:
       return (
-        <QuestionFrame number="03" title="What happened in that moment?" hint="Write only what you're sure happened. You don't need to explain who was right or wrong.">
+        <QuestionFrame number="04" title="What happened in that moment?" hint="Write only what you're sure happened. You don't need to explain who was right or wrong.">
           <label className="field-label" htmlFor="context">The situation</label>
           <textarea id="context" className="large-textarea" autoFocus value={form.context} onChange={(event) => update("context", event.target.value)} placeholder="e.g. After work, we argued about whether to keep working together…" maxLength={1600} />
         </QuestionFrame>
       );
-    case 3:
+    case 4:
       return (
-        <QuestionFrame number="04" title="What did they say at the time?" hint="It's fine if you don't remember the exact words — the gist is enough.">
+        <QuestionFrame number="05" title="What did they say at the time?" hint="It's fine if you don't remember the exact words — the gist is enough.">
           <label className="field-label" htmlFor="counterpartWords">What you remember them saying</label>
           <textarea id="counterpartWords" className="large-textarea" autoFocus value={form.counterpartWords} onChange={(event) => update("counterpartWords", event.target.value)} placeholder="e.g. They felt I wasn't taking this seriously…" maxLength={1600} />
           <label className="check-row">
@@ -821,18 +891,18 @@ function renderQuestion(
           </label>
         </QuestionFrame>
       );
-    case 4:
+    case 5:
       return (
-        <QuestionFrame number="05" title="How does the other person usually speak?" hint="Describe how they actually express themselves, not how you wish they'd respond. If you can't recall, write &ldquo;Unsure.&rdquo;">
+        <QuestionFrame number="06" title="How does the other person usually speak?" hint="Describe how they actually express themselves, not how you wish they'd respond. If you can't recall, write &ldquo;Unsure.&rdquo;">
           <label className="field-label" htmlFor="counterpartStyle">How they speak</label>
           <textarea id="counterpartStyle" className="large-textarea" autoFocus value={form.counterpartStyle} onChange={(event) => update("counterpartStyle", event.target.value)} placeholder="e.g. Few words, short sentences; dislikes naming feelings directly; asks pointed questions when angry, sometimes just replies 'fine.'" maxLength={1400} />
           <label className="field-label second-label" htmlFor="counterpartPhrases">Words or catchphrases they often use (optional)</label>
           <textarea id="counterpartPhrases" className="medium-textarea" value={form.counterpartPhrases} onChange={(event) => update("counterpartPhrases", event.target.value)} placeholder="e.g. They often say 'forget it,' 'you go first,' 'I don't know'…" maxLength={800} />
         </QuestionFrame>
       );
-    case 5:
+    case 6:
       return (
-        <QuestionFrame number="06" title="In that moment, what state was the other person in?" hint="This is your read from memory. It won't be treated as their definite inner state.">
+        <QuestionFrame number="07" title="In that moment, what state was the other person in?" hint="This is your read from memory. It won't be treated as their definite inner state.">
           <fieldset className="choice-fieldset">
             <legend>The emotion they showed</legend>
             <div className="choice-grid persona-grid">
@@ -859,30 +929,30 @@ function renderQuestion(
           </fieldset>
         </QuestionFrame>
       );
-    case 6:
+    case 7:
       return (
-        <QuestionFrame number="07" title="How did you answer at the time?" hint="If you fell silent, write &ldquo;I didn't answer.&rdquo; You can also skip this one.">
+        <QuestionFrame number="08" title="How did you answer at the time?" hint="If you fell silent, write &ldquo;I didn't answer.&rdquo; You can also skip this one.">
           <label className="field-label" htmlFor="originalReply">Your answer at the time (optional)</label>
           <textarea id="originalReply" className="large-textarea" autoFocus value={form.originalReply} onChange={(event) => update("originalReply", event.target.value)} placeholder="e.g. I only said 'whatever you want,' then left." maxLength={1200} />
         </QuestionFrame>
       );
-    case 7:
+    case 8:
       return (
-        <QuestionFrame number="08" title="At the time, what kept you from speaking?" hint="It can be a feeling, a worry, or a thought you couldn't put together in time.">
+        <QuestionFrame number="09" title="At the time, what kept you from speaking?" hint="It can be a feeling, a worry, or a thought you couldn't put together in time.">
           <label className="field-label" htmlFor="feelings">You, back then</label>
           <textarea id="feelings" className="large-textarea" autoFocus value={form.feelings} onChange={(event) => update("feelings", event.target.value)} placeholder="e.g. I felt wronged, and was afraid that speaking up would make things worse…" maxLength={1600} />
         </QuestionFrame>
       );
-    case 8:
+    case 9:
       return (
-        <QuestionFrame number="09" title="If you had another chance, what would you most want them to understand?" hint="Don't worry yet about how to say it — just the core meaning.">
+        <QuestionFrame number="10" title="If you had another chance, what would you most want them to understand?" hint="Don't worry yet about how to say it — just the core meaning.">
           <label className="field-label" htmlFor="coreIntent">What you really want to express</label>
           <textarea id="coreIntent" className="large-textarea" autoFocus value={form.coreIntent} onChange={(event) => update("coreIntent", event.target.value)} placeholder="e.g. It's not that I don't care. I'm willing to continue, but we need to rework how the work is split." maxLength={1600} />
         </QuestionFrame>
       );
-    case 9:
+    case 10:
       return (
-        <QuestionFrame number="10" title="What do you hope this conversation brings?" hint="The outcome isn't fully in your control, but you can be clear about your wish and your boundary.">
+        <QuestionFrame number="11" title="What do you hope this conversation brings?" hint="The outcome isn't fully in your control, but you can be clear about your wish and your boundary.">
           <label className="field-label" htmlFor="desiredOutcome">The change you hope for</label>
           <textarea id="desiredOutcome" className="medium-textarea" autoFocus value={form.desiredOutcome} onChange={(event) => update("desiredOutcome", event.target.value)} placeholder="e.g. Keep working together, but with a clear split of responsibilities." maxLength={1000} />
           <label className="field-label second-label" htmlFor="boundary">A boundary you can&rsquo;t give up (optional)</label>
@@ -891,7 +961,7 @@ function renderQuestion(
       );
     default:
       return (
-        <QuestionFrame number="11" title="This time, how do you want to say it?" hint="These options only shape the opening drafts. Once you enter the conversation, every line is yours to decide.">
+        <QuestionFrame number="12" title="This time, how do you want to say it?" hint="These options only shape the opening drafts. Once you enter the conversation, every line is yours to decide.">
           <fieldset className="choice-fieldset">
             <legend>Your tone</legend>
             <div className="choice-grid tone-grid">
