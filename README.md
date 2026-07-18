@@ -35,8 +35,8 @@ npm --version
 如果找不到 `node` 或 `npm`，请先安装 Node.js。如果 npm 显示
 `EBADENGINE`，请升级 Node.js 后再安装依赖。
 
-当前 npm 脚本以 macOS/Linux 环境为主；Windows 用户建议通过 WSL
-运行这些命令。
+npm 脚本通过 `cross-env` 设置环境变量，macOS、Linux 与 Windows
+（PowerShell 或 cmd）均可直接运行，无需 WSL。
 
 ### 2. 获取项目
 
