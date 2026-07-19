@@ -814,19 +814,19 @@ function renderQuestion(
       );
     case 1:
       return (
-        <QuestionFrame number="02" title="Have a voice note from that moment?" hint="You can attach an audio recording before adding the chat. This step is optional.">
+        <QuestionFrame number="02" title="Have a recording of their voice?" hint="Attach a sample of how the other person sounds before adding the chat. This step is optional.">
           <div className={`voice-upload-card${sampleControls.voiceUpload ? " has-file" : ""}`}>
             <span className="voice-upload-icon" aria-hidden="true">♪</span>
             {sampleControls.voiceUpload ? (
               <div className="voice-upload-ready">
-                <span className="voice-ready-label">VOICE NOTE READY</span>
+                <span className="voice-ready-label">THEIR VOICE SAMPLE IS READY</span>
                 <strong>{sampleControls.voiceUpload.name}</strong>
-                <span>{formatFileSize(sampleControls.voiceUpload.size)} · Audio attached</span>
+                <span>{formatFileSize(sampleControls.voiceUpload.size)} · Voice sample attached</span>
               </div>
             ) : (
               <div className="voice-upload-copy">
-                <strong>Upload a voice note</strong>
-                <span>Choose an audio file from your device</span>
+                <strong>Upload their voice</strong>
+                <span>Choose a recording of the other person from your device</span>
               </div>
             )}
             <label className="voice-file-picker" htmlFor="voiceSampleFile">
